@@ -1,11 +1,13 @@
 from flask import Flask, request, jsonify
 import re
 import time
-from langchain.schema import Document
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.embeddings import OpenAIEmbeddings
-from langchain.vectorstores import FAISS
-from langchain.chains import RetrievalQA
+from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough
+from langchain.chains.question_answering import load_qa_chain
 from langchain_google_genai import ChatGoogleGenerativeAI
 import google.generativeai as genai
 from dotenv import load_dotenv
@@ -17,12 +19,11 @@ load_dotenv()
 openai_api = os.getenv("OPENAI_API_KEY")
 gemini_api = os.getenv("GEMINI_API_KEY")
 
-
 app = Flask(__name__)
 
 # Initialize Google Gemini API
 genai_client = genai.Client(api_key=gemini_api)
-embedding_model = OpenAIEmbeddings(model="text-embedding-ada-002", openai_api_key=openai_api)
+embedding_model = OpenAIEmbeddings(model="text-embedding-ada-002", api_key=openai_api)
 
 vector_db = None
 
