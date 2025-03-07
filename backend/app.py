@@ -85,18 +85,25 @@ def transcribe_video_from_url(video_url):
         with open(temp_file_path, 'rb') as f:
             video_bytes = f.read()
         
-        # Generate content with the video bytes and prompt
+        # Generate content with the video bytes and a more specific prompt
         response = model.generate_content(
             contents=[
                 {"mime_type": "video/mp4", "data": video_bytes},
-                {"text": "Transcribe the video with timestamps."}
+                {"text": "Transcribe the video content and include timestamps in [MM:SS] format at the beginning of each sentence or at natural breaks in speech. Example format: [00:05] This is the transcribed content."}
             ]
         )
         
         # Clean up the temporary file
         os.unlink(temp_file_path)
         
-        return response.text
+        # Post-process the transcription to ensure timestamps are formatted correctly
+        text = response.text
+        
+        # Make sure there's a timestamp at the beginning if there isn't one
+        if not text.strip().startswith("["):
+            text = "[00:00] " + text
+            
+        return text
     except Exception as e:
         # Clean up the temporary file in case of error
         if os.path.exists(temp_file_path):
@@ -106,7 +113,9 @@ def transcribe_video_from_url(video_url):
 
 def create_documents(transcript, video_name):
     """Splits transcript into chunks with timestamps."""
-    timestamp_pattern = re.compile(r"\[(\d{1,2}:\d{2}(?::\d{2})?)\]")
+    # More flexible timestamp pattern to catch various formats
+    timestamp_pattern = re.compile(r"\[([\d:]+)\]|\b(\d{1,2}:\d{2}(?::\d{2})?)\b")
+    
     lines = transcript.split("\n")
     text_chunks, timestamps = [], []
     current_timestamp, current_text = None, ""
@@ -114,21 +123,38 @@ def create_documents(transcript, video_name):
     for line in lines:
         match = timestamp_pattern.search(line)
         if match:
-            if current_text:
+            # If we already have content, save it
+            if current_text and current_text.strip():
                 text_chunks.append(current_text.strip())
-                timestamps.append(current_timestamp)
+                timestamps.append(current_timestamp if current_timestamp else "00:00")
                 current_text = ""
-            current_timestamp = match.group(1)
-            line = line.replace(match.group(0), "").strip()
+                
+            # Capture either group 1 or group 2 (whichever has the timestamp)
+            current_timestamp = match.group(1) or match.group(2)
+            
+            # Remove the timestamp from the line
+            line = re.sub(timestamp_pattern, "", line, 1).strip()
+        
         if line.strip():
-            current_text += " " + line if current_text else line
+            current_text += " " + line.strip() if current_text else line.strip()
     
-    if current_text:
+    # Don't forget the last chunk
+    if current_text and current_text.strip():
         text_chunks.append(current_text.strip())
-        timestamps.append(current_timestamp)
+        timestamps.append(current_timestamp if current_timestamp else "00:00")
+    
+    # Filter out very short text chunks
+    filtered_chunks = [(chunk, ts) for chunk, ts in zip(text_chunks, timestamps) if len(chunk) > 10]
+    
+    if filtered_chunks:
+        text_chunks, timestamps = zip(*filtered_chunks)
+    else:
+        # If no valid chunks were found, create a single chunk with the whole transcript
+        text_chunks, timestamps = [transcript], ["00:00"]
     
     docs = [Document(page_content=chunk, metadata={"source": video_name, "timestamp": ts}) 
             for chunk, ts in zip(text_chunks, timestamps)]
+    
     return docs
 
 @app.route('/process', methods=['POST'])
@@ -184,12 +210,38 @@ def query_video():
         return jsonify({"error": "Missing query parameter"}), 400
         
     query = data['query']
-    similar_docs = vector_db.similarity_search(query, k=3)
-    results = [{"content": doc.page_content, 
-                "timestamp": doc.metadata.get("timestamp", ""), 
-                "source": doc.metadata.get("source", ""),
-                "video_url": doc.metadata.get("video_url", "")} for doc in similar_docs]
-                
+    similar_docs = vector_db.similarity_search(query, k=10)
+    
+    # Validate and clean up results
+    results = []
+    for doc in similar_docs:
+        # Ensure we have valid content
+        content = doc.page_content.strip()
+        if not content:
+            continue
+            
+        # Ensure we have a valid timestamp
+        timestamp = doc.metadata.get("timestamp", "")
+        if not timestamp or timestamp == "null":
+            timestamp = "00:00"  # Default timestamp
+        
+        # Add the result
+        results.append({
+            "content": content, 
+            "timestamp": timestamp, 
+            "source": doc.metadata.get("source", ""),
+            "video_url": doc.metadata.get("video_url", "")
+        })
+    
+    # If no valid results, provide a helpful message
+    if not results:
+        return jsonify({"results": [{
+            "content": "I couldn't find specific information about that in the video. Try asking a different question.",
+            "timestamp": "00:00",
+            "source": "",
+            "video_url": ""
+        }]})
+    
     return jsonify({"results": results})
 
 @app.route('/videos', methods=['GET'])
@@ -214,6 +266,7 @@ def get_videos():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 
 if __name__ == '__main__':
