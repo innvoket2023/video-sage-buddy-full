@@ -11,13 +11,28 @@ from langchain_community.vectorstores import FAISS
 from dotenv import load_dotenv
 import google.generativeai as genai
 from collections import defaultdict
+import cloudinary
+import cloudinary.uploader
+import cloudinary.api
+import requests
 
 load_dotenv()
 
 # Access environment variables
 openai_api = os.getenv("OPENAI_API_KEY")
 gemini_api = os.getenv("GEMINI_API_KEY")
+cloudinary_cloud_name = os.getenv("CLOUDINARY_CLOUD_NAME")
+cloudinary_api_key = os.getenv("CLOUDINARY_API_KEY")
+cloudinary_api_secret = os.getenv("CLOUDINARY_API_SECRET")
 
+
+# Initialize Cloudinary
+cloudinary.config(
+    cloud_name=cloudinary_cloud_name,
+    api_key=cloudinary_api_key,
+    api_secret=cloudinary_api_secret,
+    secure=True
+)
 # Initialize the Google Generative AI correctly
 genai.configure(api_key=gemini_api)
 
@@ -30,39 +45,30 @@ embedding_model = OpenAIEmbeddings(model="text-embedding-ada-002", api_key=opena
 
 # Dictionary to store vector databases for each video
 video_vector_dbs = {}
-def transcribe_video(video_file):
+# Modified transcribe_video to accept file paths
+def transcribe_video(video_path):  # Changed parameter name
     """
-    Uploads and transcribes a video.
-    video_file: Flask file object from request.files
+    Transcribes a video from a file path
     """
-    # Save the uploaded file to a temporary location
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
-    video_file.save(temp_file.name)
-    temp_file.close()
-    
     try:
-        # Use gemini to analyze the video
         model = genai.GenerativeModel('gemini-1.5-pro')
         
-        # Open the file in binary mode
-        with open(temp_file.name, 'rb') as f:
+        # Open the file from the provided path
+        with open(video_path, 'rb') as f:  # Use the path directly
             video_bytes = f.read()
-        
-        # Generate content with the video bytes and prompt
+            
         response = model.generate_content(
             contents=[
                 {"mime_type": "video/mp4", "data": video_bytes},
-                {"text": "Transcribe the video with timestamps. Also add the white/black board content if present"}
+                {"text": "Transcribe the video with timestamps..."}
             ]
         )
         
         # Clean up the temporary file
-        os.unlink(temp_file.name)
+        os.unlink(video_path)  # Delete the downloaded file
         
         return response.text
     except Exception as e:
-        # Clean up the temporary file in case of error
-        os.unlink(temp_file.name)
         print(f"Error transcribing video: {e}")
         return None
 
@@ -170,26 +176,45 @@ def _gemini_fallback(query: str, video_name: str) -> dict:
 video_metadata = {}
 universal_docs = []
 
+def download_video_from_cloudinary(video_url):
+    """
+    Downloads a video from Cloudinary URL to a temporary file
+    """
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
+    
+    try:
+        # Download the file
+        response = requests.get(video_url, stream=True)
+        response.raise_for_status()
+        
+        # Write the file to the temporary location
+        for chunk in response.iter_content(chunk_size=8192):
+            temp_file.write(chunk)
+        
+        temp_file.close()
+        return temp_file.name
+    except Exception as e:
+        temp_file.close()
+        os.unlink(temp_file.name)
+        print(f"Error downloading video: {e}")
+        return None
+
 @app.route('/upload-and-store', methods=['POST'])
 def upload_and_store():
-    if 'file' not in request.files:
-        return jsonify({"error": "No file part"}), 400
-    
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({"error": "No file selected"}), 400
-
+    data = request.get_json()
+    print(data)
     # Get metadata from form data
-    title = request.form.get('title', file.filename)  # Use title or filename
-    description = request.form.get('description', '')
+    title = request.form.get('title', data.get("public_id"))  # Use title or filename
+    description = request.form.get('description', "")
     
+    video_name = title  
     # Process video transcription
-    transcript = transcribe_video(file)
+    video = download_video_from_cloudinary(data.get("video_url"))
+    transcript = transcribe_video(video)
     if not transcript:
         return jsonify({"error": "Transcription failed"}), 500
 
     # Store directly with metadata
-    video_name = title  # Use title as the primary identifier
     
     # Check if video already exists
     if video_name in video_metadata:
@@ -226,21 +251,34 @@ def upload_and_store():
 
     # Store metadata last to ensure indexes are valid
     video_metadata[video_name] = {
+        "publicID" : video_name,
         "transcript": transcript,
         "description": description,
         "processed": True,
-        "index_path": f"faiss_indexes/individual/{safe_video_name}"
+        "index_path": f"faiss_indexes/individual/{safe_video_name}",
+        "video_url": data.get("video_url") 
     }
 
     return jsonify({
         "message": "Video uploaded and stored successfully",
-        "video_name": video_name
+        "video_name": video_name,
+        "transcript": transcript
     })
-
 
 @app.route('/videos', methods=['GET'])
 def get_videos():
+    print(list(video_metadata.values()))
     return jsonify({"videos": list(video_metadata.keys())})
+
+
+@app.route('/preview', methods= ['GET'])
+def get_preview():
+    """Retrieve a list of uploaded videos from Cloudinary."""
+    try:
+        return jsonify({"videos": list(video_metadata.values())})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/query', methods=['POST'])
@@ -266,7 +304,7 @@ def query_video():
             return jsonify({"error": "Video data not available"}), 404
 
         # Perform similarity search
-        search_k = 10 if video_name == "all" else 3
+        search_k = 3 if video_name == "all" else 3
         docs = vector_db.similarity_search(query, k=search_k)
         
         # Prepare results in uniform format
