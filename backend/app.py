@@ -60,7 +60,7 @@ def transcribe_video(video_path):  # Changed parameter name
         response = model.generate_content(
             contents=[
                 {"mime_type": "video/mp4", "data": video_bytes},
-                {"text": "Transcribe the video with timestamps..."}
+                {"text": "Transcribe the video with timestamps. Make sure to add the white/black board content in the transcription too"}
             ]
         )
         
