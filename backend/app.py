@@ -30,7 +30,6 @@ embedding_model = OpenAIEmbeddings(model="text-embedding-ada-002", api_key=opena
 
 # Dictionary to store vector databases for each video
 video_vector_dbs = {}
-
 def transcribe_video(video_file):
     """
     Uploads and transcribes a video.
@@ -283,7 +282,7 @@ def query_video():
         # Generate response using the determined source
         content = _gemini_fallback(query, final_source)
         results = {
-            "content": content + f"timestamp is: {filtered_results[0]["timestamp"],}",
+            "content": content,
             "timestamp": filtered_results[0]["timestamp"],
             "source": final_source
         }
