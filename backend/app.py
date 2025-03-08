@@ -163,7 +163,7 @@ def _gemini_fallback(query: str, video_name: str) -> dict:
             "source": "System"
         }
 
-    prompt = f"Based on this context: {context[:10000]}\n\nAnswer concisely: {query} complete your response, and give the timestamp in strictly HH:MM:SS in the last (Just timestamps, no talk about the timestamps)"
+    prompt = f"Based on this context: {context[:10000]}\n\nAnswer concisely: {query} complete your response, and give the timestamp in strictly [HH:MM:SS] format in the last (Just timestamps, no talk about the timestamps)"
     response = model.generate_content(prompt)
     # return {
     #     "content": response.text,
