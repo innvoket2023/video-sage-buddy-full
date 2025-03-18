@@ -38,7 +38,7 @@ genai.configure(api_key=gemini_api)
 
 app = Flask(__name__)
 # Configure CORS to allow requests from your frontend
-CORS(app, resources={r"/*": {"origins": ["http://localhost:8080", "http://localhost:3000"]}})
+CORS(app, resources={r"/*": {"origins": ["http://localhost:8080", "http://localhost:3000"]}}) 
 
 # Initialize embedding model
 embedding_model = OpenAIEmbeddings(model="text-embedding-ada-002", api_key=openai_api)
@@ -163,7 +163,10 @@ def _gemini_fallback(query: str, video_name: str) -> dict:
             "source": "System"
         }
 
-    prompt = f"Based on this context: {context[:10000]}\n\nAnswer concisely: {query} complete your response, and give the timestamp in strictly [HH:MM:SS] format in the last (Just timestamps, no talk about the timestamps). You dont have to give timestamps if the question is unrelated to the video, only give less or equal to 3 most important timestamps. BE FRIENDLY. if question is completely unrelated, you dont have to give timestamps at all"
+    # prompt = f"Based on this context: {context[:10000]}\n\nAnswer concisely: {query} complete your response, and give the timestamp in strictly [HH:MM:SS] format in the last (Just timestamps, no talk about the timestamps). You dont have to give timestamps if the question is unrelated to the video, only give less or equal to 3 most important timestamps. BE FRIENDLY. if question is completely unrelated, you dont have to give timestamps at all"
+
+
+    prompt = f"Based on this context: {context[:10000]}\\n\\nAnswer concisely: {query}\\n\\nImportant guidelines:\\n- Complete your response in a friendly, helpful tone\\n- If the question relates to video content, include up to 3 most important timestamps in strictly [HH:MM:SS] format at the end\\n- Do not repeat any timestamp\\n- Only provide timestamps for video-related questions\\n- If the question is completely unrelated to the video, do not include any timestamps\\n- Place timestamps at the very end of your response without any additional commentary\\n\\nExample good response with timestamps:\\n[Your concise answer to the query]\\n[HH:MM:SS]\\n[HH:MM:SS]\\n[HH:MM:SS]\\n\\nExample good response without timestamps:\\n[Your concise answer to the unrelated query]"
     response = model.generate_content(prompt)
     # return {
     #     "content": response.text,
@@ -280,7 +283,6 @@ def get_preview():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
 @app.route('/query', methods=['POST'])
 def query_video():
     try:
@@ -304,7 +306,7 @@ def query_video():
             return jsonify({"error": "Video data not available"}), 404
 
         # Perform similarity search
-        search_k = 3 if video_name == "all" else 3
+        search_k = 1 if video_name == "all" else 3
         docs = vector_db.similarity_search(query, k=search_k)
         
         # Prepare results in uniform format
@@ -327,9 +329,13 @@ def query_video():
 
         return jsonify({"results": [results]})
 
+    except KeyError as e:
+        return jsonify({"error": f"Missing required field: {str(e)}"}), 400
     except Exception as e:
         app.logger.error(f"Query error: {str(e)}")
+
         return jsonify({"error": "Processing failed"}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug = True)
