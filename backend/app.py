@@ -1,7 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import re
-import time
 import os
 import tempfile
 from langchain_core.documents import Document
@@ -15,6 +14,17 @@ import cloudinary
 import cloudinary.uploader
 import cloudinary.api
 import requests
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import text 
+from sqlalchemy.dialects.postgresql import UUID
+from flask import Flask, request, jsonify, session
+from flask_bcrypt import Bcrypt
+from sqlalchemy.exc import IntegrityError
+import re
+import datetime
+
+import uuid
+
 
 load_dotenv()
 
@@ -37,9 +47,207 @@ cloudinary.config(
 genai.configure(api_key=gemini_api)
 
 app = Flask(__name__)
-# Configure CORS to allow requests from your frontend
+db = SQLAlchemy(app)
 CORS(app, resources={r"/*": {"origins": ["http://localhost:8080", "http://localhost:3000"]}}) 
 
+#Below can be implemented in MODEL.PY
+app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("SQLALCHEMY_DATABASE_URI")
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+    
+class User(db.Model):
+    __tablename__ = 'users'
+    
+    user_id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    username = db.Column(db.String(100), unique=True, nullable=False)
+    email = db.Column(db.String(255), unique=True, nullable=False)
+    password_hash = db.Column(db.String(255), nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now())
+    updated_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now(), onupdate=db.func.now())
+    last_login = db.Column(db.DateTime(timezone=True), nullable=True, onupdate=db.func.now())
+    is_active = db.Column(db.Boolean, default=False)
+    
+    def __repr__(self):
+        return f'<User {self.username}>'
+    
+    #Helper function
+    def to_dict(self):
+        return {
+            'id': self.user_id,
+            'username': self.username,
+            'email': self.email,
+            'created_at': self.created_at.isoformat(),
+            'updated_at': self.updated_at.isoformat(),
+            'last_login': self.last_login,
+            'is_active': self.is_active 
+        }
+#Below are the CRUD operations for LOGIN/SIGNUP (USER TABLE)
+#===========================================================
+app = Flask(__name__)
+app.config['SECRET_KEY'] = 'your-secret-key'  # Change this in production
+app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://username:password@localhost/your_database'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+bcrypt = Bcrypt(app)
+db.init_app(app)
+
+# Signup/Registration function
+@app.route('/api/signup', methods=['POST'])
+def signup():
+    data = request.get_json()
+    
+    # Validate required fields
+    if not all(k in data for k in ('username', 'email', 'password')):
+        return jsonify({'error': 'Missing required fields'}), 400
+    
+    username = data.get('username')
+    email = data.get('email')
+    password = data.get('password')
+    
+    # Validate email format
+    email_pattern = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
+    if not email_pattern.match(email):
+        return jsonify({'error': 'Invalid email format'}), 400
+    
+    # Validate password strength (example policy)
+    if len(password) < 8:
+        return jsonify({'error': 'Password must be at least 8 characters long'}), 400
+    
+    # Hash the password
+    password_hash = bcrypt.generate_password_hash(password).decode('utf-8')
+    
+    # Create a new user
+    new_user = User(
+        username=username,
+        email=email,
+        password_hash=password_hash
+    )
+    
+    try:
+        db.session.add(new_user)
+        db.session.commit()
+        return jsonify({
+            'message': 'Registration successful! Please check your email to activate your account.',
+            'user': {
+                'id': str(new_user.user_id),
+                'username': new_user.username,
+                'email': new_user.email
+            } #Try using the helper function here after testing the api
+        }), 201
+
+    except IntegrityError as e:
+        db.session.rollback()
+        # Check what kind of integrity error
+        if 'username' in str(e.orig):
+            return jsonify({'error': 'Username already exists'}), 409
+        elif 'email' in str(e.orig):
+            return jsonify({'error': 'Email already exists'}), 409
+        else:
+            return jsonify({'error': 'Registration failed due to database error'}), 500
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': f'Registration failed: {str(e)}'}), 500
+
+# Login function
+@app.route('/api/login', methods=['POST'])
+def login():
+    data = request.get_json()
+    
+    # Check if login is via username or email
+    identifier = data.get('username', '') or data.get('email', '')
+    password = data.get('password', '')
+    
+    if not identifier or not password:
+        return jsonify({'error': 'Username/email and password are required'}), 400
+    
+    # Find the user
+    try:
+        # Check if the identifier is an email
+        if '@' in identifier:
+            user = User.query.filter_by(email=identifier).first()
+        else:
+            user = User.query.filter_by(username=identifier).first()
+        
+        if not user:
+            return jsonify({'error': 'Invalid credentials'}), 401
+        
+        # Check password
+        if not bcrypt.check_password_hash(user.password_hash, password):
+            return jsonify({'error': 'Invalid credentials'}), 401
+        
+        # Check if account is active
+        if not user.is_active:
+            return jsonify({'error': 'Account not activated. Please check your email.'}), 403
+        
+        # Update last_login timestamp
+        user.last_login = datetime.datetime.now(datetime.timezone.utc)
+        db.session.commit()
+        
+        # Set up session (for cookie-based auth)
+        session['user_id'] = str(user.user_id)
+        
+        return jsonify({
+            'message': 'Login successful',
+            'user': user.to_dict()
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': f'Login failed: {str(e)}'}), 500
+
+# Account activation function
+@app.route('/api/activate/<uuid:user_id>', methods=['GET'])
+def activate_account(user_id):
+    user = User.query.filter_by(user_id=user_id).first()
+    
+    if not user:
+        return jsonify({'error': 'Invalid activation link'}), 404
+    
+    if user.is_active:
+        return jsonify({'message': 'Account already activated'}), 200
+    
+    user.is_active = True
+    db.session.commit()
+    
+    return jsonify({'message': 'Account activated successfully! You can now log in.'}), 200
+
+# Password reset request
+@app.route('/api/reset-password', methods=['POST'])
+def request_password_reset():
+    data = request.get_json()
+    email = data.get('email')
+    
+    if not email:
+        return jsonify({'error': 'Email is required'}), 400
+    
+    user = User.query.filter_by(email=email).first()
+    
+    if not user:
+        # Don't reveal if email exists or not for security
+        return jsonify({'message': 'If your email exists in our system, you will receive a password reset link'}), 200
+    
+    # In a real application, you would:
+    # 1. Generate a secure token
+    # 2. Store it with an expiration time
+    # 3. Send an email with the reset link
+    
+    return jsonify({'message': 'If your email exists in our system, you will receive a password reset link'}), 200
+
+# Logout function
+@app.route('/api/logout', methods=['POST'])
+def logout():
+    # Clear the session
+    session.pop('user_id', None)
+    return jsonify({'message': 'Logged out successfully'}), 200
+
+if __name__ == '__main__':
+    with app.app_context():
+        db.create_all()
+    app.run(debug=True)
+
+#===========================================================
+#Below are the CRUD operations for 
+
+#Below can be implemented in either MAIN.PY or ROUTER.PY
 # Initialize embedding model
 embedding_model = OpenAIEmbeddings(model="text-embedding-ada-002", api_key=openai_api)
 
@@ -338,4 +546,6 @@ def query_video():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
+    with app.app_context():
+        db.create_all()
     app.run(host='0.0.0.0', port=port, debug = True)
