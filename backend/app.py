@@ -82,10 +82,7 @@ class User(db.Model):
         }
 #Below are the CRUD operations for LOGIN/SIGNUP (USER TABLE)
 #===========================================================
-app = Flask(__name__)
-app.config['SECRET_KEY'] = 'your-secret-key'  # Change this in production
-app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://username:password@localhost/your_database'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
 
 bcrypt = Bcrypt(app)
 db.init_app(app)
