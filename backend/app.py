@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify
+# from flask import session  # Commented out
 from flask_cors import CORS
 import re
 import os
@@ -17,12 +18,13 @@ import requests
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import text 
 from sqlalchemy.dialects.postgresql import UUID
-from flask import Flask, request, jsonify, session
+from flask import Flask, request, jsonify
+# from flask import session  # Commented out
 from flask_bcrypt import Bcrypt
 from sqlalchemy.exc import IntegrityError
 import re
 import datetime
-
+import secrets
 import uuid
 
 
@@ -33,6 +35,7 @@ openai_api = os.getenv("OPENAI_API_KEY")
 gemini_api = os.getenv("GEMINI_API_KEY")
 cloudinary_cloud_name = os.getenv("CLOUDINARY_CLOUD_NAME")
 cloudinary_api_key = os.getenv("CLOUDINARY_API_KEY")
+print(cloudinary_api_key)
 cloudinary_api_secret = os.getenv("CLOUDINARY_API_SECRET")
 
 
@@ -47,12 +50,29 @@ cloudinary.config(
 genai.configure(api_key=gemini_api)
 
 app = Flask(__name__)
-db = SQLAlchemy(app)
-CORS(app, resources={r"/*": {"origins": ["http://localhost:8080", "http://localhost:3000"]}}) 
-
-#Below can be implemented in MODEL.PY
+app.secret_key = os.getenv("FLASK_SECRET_KEY", secrets.token_hex(16))
 app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("SQLALCHEMY_DATABASE_URI")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+# Move CORS setup here, before any route definitions
+CORS(app, 
+     resources={r"/*": {
+         "origins": ["http://localhost:8080", "http://localhost:3000", "http://localhost:5000"],
+         "supports_credentials": True,
+         "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"]
+     }})
+
+db = SQLAlchemy(app)
+
+# Add explicit CORS handling
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    response.headers.add('Access-Control-Allow-Credentials', 'true')
+    return response
+
+#Below can be implemented in MODEL.PY
     
 class User(db.Model):
     __tablename__ = 'users'
@@ -85,11 +105,14 @@ class User(db.Model):
 
 
 bcrypt = Bcrypt(app)
-db.init_app(app)
+# db.init_app(app)
 
 # Signup/Registration function
-@app.route('/api/signup', methods=['POST'])
+@app.route('/api/signup', methods=['POST', 'OPTIONS'])
 def signup():
+    if request.method == 'OPTIONS':
+        return '', 200
+        
     data = request.get_json()
     
     # Validate required fields
@@ -145,8 +168,11 @@ def signup():
         return jsonify({'error': f'Registration failed: {str(e)}'}), 500
 
 # Login function
-@app.route('/api/login', methods=['POST'])
+@app.route('/api/login', methods=['POST', 'OPTIONS'])
 def login():
+    if request.method == 'OPTIONS':
+        return '', 200
+        
     data = request.get_json()
     
     # Check if login is via username or email
@@ -179,8 +205,8 @@ def login():
         user.last_login = datetime.datetime.now(datetime.timezone.utc)
         db.session.commit()
         
-        # Set up session (for cookie-based auth)
-        session['user_id'] = str(user.user_id)
+        # Set up session (for cookie-based auth) - COMMENTED OUT
+        # session['user_id'] = str(user.user_id)
         
         return jsonify({
             'message': 'Login successful',
@@ -192,8 +218,11 @@ def login():
         return jsonify({'error': f'Login failed: {str(e)}'}), 500
 
 # Account activation function
-@app.route('/api/activate/<uuid:user_id>', methods=['GET'])
+@app.route('/api/activate/<uuid:user_id>', methods=['GET', 'OPTIONS'])
 def activate_account(user_id):
+    if request.method == 'OPTIONS':
+        return '', 200
+        
     user = User.query.filter_by(user_id=user_id).first()
     
     if not user:
@@ -208,8 +237,11 @@ def activate_account(user_id):
     return jsonify({'message': 'Account activated successfully! You can now log in.'}), 200
 
 # Password reset request
-@app.route('/api/reset-password', methods=['POST'])
+@app.route('/api/reset-password', methods=['POST', 'OPTIONS'])
 def request_password_reset():
+    if request.method == 'OPTIONS':
+        return '', 200
+        
     data = request.get_json()
     email = data.get('email')
     
@@ -230,16 +262,14 @@ def request_password_reset():
     return jsonify({'message': 'If your email exists in our system, you will receive a password reset link'}), 200
 
 # Logout function
-@app.route('/api/logout', methods=['POST'])
+@app.route('/api/logout', methods=['POST', 'OPTIONS'])
 def logout():
-    # Clear the session
-    session.pop('user_id', None)
+    if request.method == 'OPTIONS':
+        return '', 200
+        
+    # Clear the session - COMMENTED OUT
+    # session.pop('user_id', None)
     return jsonify({'message': 'Logged out successfully'}), 200
-
-if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
-    app.run(debug=True)
 
 #===========================================================
 #Below are the CRUD operations for 
@@ -368,16 +398,8 @@ def _gemini_fallback(query: str, video_name: str) -> dict:
             "source": "System"
         }
 
-    # prompt = f"Based on this context: {context[:10000]}\n\nAnswer concisely: {query} complete your response, and give the timestamp in strictly [HH:MM:SS] format in the last (Just timestamps, no talk about the timestamps). You dont have to give timestamps if the question is unrelated to the video, only give less or equal to 3 most important timestamps. BE FRIENDLY. if question is completely unrelated, you dont have to give timestamps at all"
-
-
     prompt = f"Based on this context: {context[:10000]}\\n\\nAnswer concisely: {query}\\n\\nImportant guidelines:\\n- Complete your response in a friendly, helpful tone\\n- If the question relates to video content, include up to 3 most important timestamps in strictly [HH:MM:SS] format at the end\\n- Do not repeat any timestamp\\n- Only provide timestamps for video-related questions\\n- If the question is completely unrelated to the video, do not include any timestamps\\n- Place timestamps at the very end of your response without any additional commentary\\n\\nExample good response with timestamps:\\n[Your concise answer to the query]\\n[HH:MM:SS]\\n[HH:MM:SS]\\n[HH:MM:SS]\\n\\nExample good response without timestamps:\\n[Your concise answer to the unrelated query]"
     response = model.generate_content(prompt)
-    # return {
-    #     "content": response.text,
-    #     # "timestamp": "AI-generated response",
-    #     # "source": "Gemini"
-    # }
     return response.text
 
 # Global dictionary to store video metadata
@@ -407,8 +429,11 @@ def download_video_from_cloudinary(video_url):
         print(f"Error downloading video: {e}")
         return None
 
-@app.route('/upload-and-store', methods=['POST'])
+@app.route('/upload-and-store', methods=['POST', 'OPTIONS'])
 def upload_and_store():
+    if request.method == 'OPTIONS':
+        return '', 200
+        
     data = request.get_json()
     print(data)
     # Get metadata from form data
@@ -473,23 +498,32 @@ def upload_and_store():
         "transcript": transcript
     })
 
-@app.route('/videos', methods=['GET'])
+@app.route('/videos', methods=['GET', 'OPTIONS'])
 def get_videos():
+    if request.method == 'OPTIONS':
+        return '', 200
+        
     print(list(video_metadata.values()))
     return jsonify({"videos": list(video_metadata.keys())})
 
 
-@app.route('/preview', methods= ['GET'])
+@app.route('/preview', methods=['GET', 'OPTIONS'])
 def get_preview():
     """Retrieve a list of uploaded videos from Cloudinary."""
+    if request.method == 'OPTIONS':
+        return '', 200
+        
     try:
         return jsonify({"videos": list(video_metadata.values())})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route('/query', methods=['POST'])
+@app.route('/query', methods=['POST', 'OPTIONS'])
 def query_video():
+    if request.method == 'OPTIONS':
+        return '', 200
+        
     try:
         data = request.get_json()
         query = data['query']
@@ -545,4 +579,4 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     with app.app_context():
         db.create_all()
-    app.run(host='0.0.0.0', port=port, debug = True)
+    app.run(host='0.0.0.0', port=port, debug=True)
