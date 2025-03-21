@@ -22,6 +22,7 @@ from flask import Flask, request, jsonify
 from flask import session  # Commented out
 from flask_bcrypt import Bcrypt
 from sqlalchemy.exc import IntegrityError
+from flask_session import Session
 from functools import wraps
 import re
 import datetime
@@ -52,9 +53,17 @@ genai.configure(api_key=gemini_api)
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", secrets.token_hex(16))
+# app.config["SESSION_COOKIE_SAMESITE"] = "Lax"   # if your frontend is truly cross-origin, else use 'Lax' or 'Strict'
+# app.config["SESSION_COOKIE_SECURE"] = False         # This must be True if SameSite is 'None'; use False for local http
+app.config["SESSION_COOKIE_HTTPONLY"] = False
 app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("SQLALCHEMY_DATABASE_URI")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-
+# Flask-Session configuration
+app.config["SESSION_TYPE"] = "filesystem"  # You can also use "redis" or "memcached" if available
+# app.config["SESSION_PERMANENT"] = True
+# app.config["SESSION_USE_SIGNER"] = True
+# app.config["SESSION_FILE_DIR"] = os.path.join(os.getcwd(), "flask_session")  # For filesystem sessions
+app.config["PERMANENT_SESSION_LIFETIME"] = datetime.timedelta(days=1)  # Session expiration
 # Move CORS setup here, before any route definitions
 CORS(app, 
      resources={r"/*": {
@@ -62,6 +71,7 @@ CORS(app,
          "supports_credentials": True,
          "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"]
      }})
+Session(app)
 
 db = SQLAlchemy(app)
 
@@ -169,6 +179,11 @@ def signup():
         db.session.rollback()
         return jsonify({'error': f'Registration failed: {str(e)}'}), 500
 
+@app.route('/api/mock', methods=["GET"])
+def mock():
+    user_id=session.get("user_id")
+    return jsonify({"user_id": user_id}), 200
+
 # Login function
 @app.route('/api/login', methods=['POST', 'OPTIONS'])
 def login():
@@ -209,6 +224,7 @@ def login():
         
         # Set up session (for cookie-based auth) - COMMENTED OUT
         session['user_id'] = str(user.user_id)
+        print(str(user.user_id))
         
         return jsonify({
             'message': 'Login successful',
