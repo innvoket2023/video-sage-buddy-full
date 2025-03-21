@@ -19,9 +19,10 @@ from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import text 
 from sqlalchemy.dialects.postgresql import UUID
 from flask import Flask, request, jsonify
-# from flask import session  # Commented out
+from flask import session  # Commented out
 from flask_bcrypt import Bcrypt
 from sqlalchemy.exc import IntegrityError
+from functools import wraps
 import re
 import datetime
 import secrets
@@ -206,7 +207,7 @@ def login():
         db.session.commit()
         
         # Set up session (for cookie-based auth) - COMMENTED OUT
-        # session['user_id'] = str(user.user_id)
+        session['user_id'] = str(user.user_id)
         
         return jsonify({
             'message': 'Login successful',
@@ -268,9 +269,18 @@ def logout():
         return '', 200
         
     # Clear the session - COMMENTED OUT
-    # session.pop('user_id', None)
+    session.pop('user_id', None)
     return jsonify({'message': 'Logged out successfully'}), 200
 
+#===========================================================
+#Below is the login_required decorator
+def login_required(function):
+    @wraps(function)
+    def decorated_function(*args, **kwargs):
+        if "user_id" not in session:
+            return jsonify({"Error": "Authentication required"}), 401
+        return function(*args, **kwargs)
+    return decorated_function
 #===========================================================
 #Below are the CRUD operations for 
 
@@ -430,6 +440,7 @@ def download_video_from_cloudinary(video_url):
         return None
 
 @app.route('/upload-and-store', methods=['POST', 'OPTIONS'])
+@login_required
 def upload_and_store():
     if request.method == 'OPTIONS':
         return '', 200
@@ -499,6 +510,7 @@ def upload_and_store():
     })
 
 @app.route('/videos', methods=['GET', 'OPTIONS'])
+@login_required
 def get_videos():
     if request.method == 'OPTIONS':
         return '', 200
@@ -506,8 +518,8 @@ def get_videos():
     print(list(video_metadata.values()))
     return jsonify({"videos": list(video_metadata.keys())})
 
-
 @app.route('/preview', methods=['GET', 'OPTIONS'])
+@login_required
 def get_preview():
     """Retrieve a list of uploaded videos from Cloudinary."""
     if request.method == 'OPTIONS':
@@ -520,6 +532,7 @@ def get_preview():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/query', methods=['POST', 'OPTIONS'])
+@login_required
 def query_video():
     if request.method == 'OPTIONS':
         return '', 200
