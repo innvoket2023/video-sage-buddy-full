@@ -146,6 +146,7 @@ def signup():
     try:
         db.session.add(new_user)
         db.session.commit()
+        print(str(new_user.user_id))
         return jsonify({
             'message': 'Registration successful! Please check your email to activate your account.',
             'user': {
@@ -277,7 +278,10 @@ def logout():
 def login_required(function):
     @wraps(function)
     def decorated_function(*args, **kwargs):
+        if request.method == 'OPTIONS':
+            return function(*args, **kwargs)
         if "user_id" not in session:
+            print("There is an error while doing login_required")
             return jsonify({"Error": "Authentication required"}), 401
         return function(*args, **kwargs)
     return decorated_function
