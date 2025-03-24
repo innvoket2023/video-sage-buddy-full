@@ -1,5 +1,4 @@
 from flask import Flask, request, jsonify
-# from flask import session  # Commented out
 from flask_cors import CORS
 import re
 import os
@@ -18,17 +17,14 @@ import requests
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import text 
 from sqlalchemy.dialects.postgresql import UUID
-from flask import Flask, request, jsonify
-from flask import session  # Commented out
 from flask_bcrypt import Bcrypt
 from sqlalchemy.exc import IntegrityError
-from flask_session import Session
 from functools import wraps
 import re
 import datetime
 import secrets
 import uuid
-
+import jwt  # New import for JWT
 
 load_dotenv()
 
@@ -37,9 +33,9 @@ openai_api = os.getenv("OPENAI_API_KEY")
 gemini_api = os.getenv("GEMINI_API_KEY")
 cloudinary_cloud_name = os.getenv("CLOUDINARY_CLOUD_NAME")
 cloudinary_api_key = os.getenv("CLOUDINARY_API_KEY")
-print(cloudinary_api_key)
 cloudinary_api_secret = os.getenv("CLOUDINARY_API_SECRET")
-
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", secrets.token_hex(32))  # Add JWT secret key
+JWT_EXPIRATION = int(os.getenv("JWT_EXPIRATION", 86400))  # Token expiration in seconds (default: 1 day)
 
 # Initialize Cloudinary
 cloudinary.config(
@@ -53,17 +49,9 @@ genai.configure(api_key=gemini_api)
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", secrets.token_hex(16))
-# app.config["SESSION_COOKIE_SAMESITE"] = "Lax"   # if your frontend is truly cross-origin, else use 'Lax' or 'Strict'
-# app.config["SESSION_COOKIE_SECURE"] = False         # This must be True if SameSite is 'None'; use False for local http
-app.config["SESSION_COOKIE_HTTPONLY"] = False
 app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("SQLALCHEMY_DATABASE_URI")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-# Flask-Session configuration
-app.config["SESSION_TYPE"] = "filesystem"  # You can also use "redis" or "memcached" if available
-# app.config["SESSION_PERMANENT"] = True
-# app.config["SESSION_USE_SIGNER"] = True
-# app.config["SESSION_FILE_DIR"] = os.path.join(os.getcwd(), "flask_session")  # For filesystem sessions
-app.config["PERMANENT_SESSION_LIFETIME"] = datetime.timedelta(days=1)  # Session expiration
+
 # Move CORS setup here, before any route definitions
 CORS(app, 
      resources={r"/*": {
@@ -71,17 +59,16 @@ CORS(app,
          "supports_credentials": True,
          "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"]
      }})
-Session(app)
 
 db = SQLAlchemy(app)
 
 # Add explicit CORS handling
-@app.after_request
-def after_request(response):
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-    response.headers.add('Access-Control-Allow-Credentials', 'true')
-    return response
+# @app.after_request
+# def after_request(response):
+#     response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+#     response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE')
+#     response.headers.add('Access-Control-Allow-Credentials', 'true')
+#     return response
 
 #Below can be implemented in MODEL.PY
     
@@ -91,7 +78,7 @@ class User(db.Model):
     user_id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     username = db.Column(db.String(100), unique=True, nullable=False)
     email = db.Column(db.String(255), unique=True, nullable=False)
-    password_hash = db.Column(db.String(255), nullable=False)
+    password = db.Column(db.String(255), nullable=False)
     created_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now())
     updated_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now(), onupdate=db.func.now())
     last_login = db.Column(db.DateTime(timezone=True), nullable=True, onupdate=db.func.now())
@@ -111,21 +98,39 @@ class User(db.Model):
             'last_login': self.last_login,
             'is_active': self.is_active 
         }
+
+# JWT Token functions
+def generate_token(user_id):
+    """Generate a JWT token for the user"""
+    payload = {
+        'exp': datetime.datetime.utcnow() + datetime.timedelta(seconds=JWT_EXPIRATION),
+        'iat': datetime.datetime.utcnow(),
+        'sub': str(user_id)
+    }
+    return jwt.encode(payload, JWT_SECRET_KEY, algorithm='HS256')
+
+def decode_token(token):
+    """Decode the JWT token"""
+    try:
+        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=['HS256'])
+        return payload['sub']
+    except jwt.ExpiredSignatureError:
+        return None  # Token expired
+    except jwt.InvalidTokenError:
+        return None  # Invalid token
+
 #Below are the CRUD operations for LOGIN/SIGNUP (USER TABLE)
 #===========================================================
 
-
 bcrypt = Bcrypt(app)
-# db.init_app(app)
 
 # Signup/Registration function
-@app.route('/api/signup', methods=['POST', 'OPTIONS'])
+@app.route('/api/signup', methods=['POST'])
 def signup():
-    if request.method == 'OPTIONS':
-        return '', 200
+    # if request.method == 'OPTIONS':
+    #     return '', 200
         
     data = request.get_json()
-    
     # Validate required fields
     if not all(k in data for k in ('username', 'email', 'password')):
         return jsonify({'error': 'Missing required fields'}), 400
@@ -144,26 +149,27 @@ def signup():
         return jsonify({'error': 'Password must be at least 8 characters long'}), 400
     
     # Hash the password
-    password_hash = bcrypt.generate_password_hash(password).decode('utf-8')
+    password = bcrypt.generate_password_hash(password).decode('utf-8')
     
     # Create a new user
     new_user = User(
         username=username,
         email=email,
-        password_hash=password_hash
+        password=password
     )
     
     try:
         db.session.add(new_user)
         db.session.commit()
-        print(str(new_user.user_id))
+        
         return jsonify({
             'message': 'Registration successful! Please check your email to activate your account.',
             'user': {
                 'id': str(new_user.user_id),
                 'username': new_user.username,
                 'email': new_user.email
-            } #Try using the helper function here after testing the api
+            },
+            # 'token': token  # Include JWT token in response
         }), 201
 
     except IntegrityError as e:
@@ -181,7 +187,9 @@ def signup():
 
 @app.route('/api/mock', methods=["GET"])
 def mock():
-    user_id=session.get("user_id")
+    # Get token from Authorization header
+    token = request.headers.get('Authorization', '').replace('Bearer ', '')
+    user_id = decode_token(token)
     return jsonify({"user_id": user_id}), 200
 
 # Login function
@@ -211,7 +219,7 @@ def login():
             return jsonify({'error': 'Invalid credentials'}), 401
         
         # Check password
-        if not bcrypt.check_password_hash(user.password_hash, password):
+        if not bcrypt.check_password_hash(user.password, password):
             return jsonify({'error': 'Invalid credentials'}), 401
         
         # Check if account is active
@@ -222,13 +230,13 @@ def login():
         user.last_login = datetime.datetime.now(datetime.timezone.utc)
         db.session.commit()
         
-        # Set up session (for cookie-based auth) - COMMENTED OUT
-        session['user_id'] = str(user.user_id)
-        print(str(user.user_id))
+        # Generate JWT token
+        token = generate_token(user.user_id)
         
         return jsonify({
             'message': 'Login successful',
-            'user': user.to_dict()
+            'user': user.to_dict(),
+            'token': str(token)  # Include JWT token in response
         }), 200
         
     except Exception as e:
@@ -236,10 +244,10 @@ def login():
         return jsonify({'error': f'Login failed: {str(e)}'}), 500
 
 # Account activation function
-@app.route('/api/activate/<uuid:user_id>', methods=['GET', 'OPTIONS'])
+@app.route('/api/activate/<uuid:user_id>', methods=['GET'])
 def activate_account(user_id):
-    if request.method == 'OPTIONS':
-        return '', 200
+    # if request.method == 'OPTIONS':
+    #     return '', 200
         
     user = User.query.filter_by(user_id=user_id).first()
     
@@ -255,10 +263,10 @@ def activate_account(user_id):
     return jsonify({'message': 'Account activated successfully! You can now log in.'}), 200
 
 # Password reset request
-@app.route('/api/reset-password', methods=['POST', 'OPTIONS'])
+@app.route('/api/reset-password', methods=['POST'])
 def request_password_reset():
-    if request.method == 'OPTIONS':
-        return '', 200
+    # if request.method == 'OPTIONS':
+    #     return '', 200
         
     data = request.get_json()
     email = data.get('email')
@@ -279,30 +287,47 @@ def request_password_reset():
     
     return jsonify({'message': 'If your email exists in our system, you will receive a password reset link'}), 200
 
-# Logout function
-@app.route('/api/logout', methods=['POST', 'OPTIONS'])
+# Logout function - just a placeholder since JWT is stateless
+@app.route('/api/logout', methods=['POST'])
 def logout():
-    if request.method == 'OPTIONS':
-        return '', 200
-        
-    # Clear the session - COMMENTED OUT
-    session.pop('user_id', None)
+    # if request.method == 'OPTIONS':
+    #     return '', 200
+    
+    # JWT is stateless, so no server-side logout is needed
+    # Client should discard the token
     return jsonify({'message': 'Logged out successfully'}), 200
 
 #===========================================================
-#Below is the login_required decorator
-def login_required(function):
+# JWT auth decorator to replace login_required
+def jwt_required(function):
     @wraps(function)
     def decorated_function(*args, **kwargs):
-        if request.method == 'OPTIONS':
-            return function(*args, **kwargs)
-        if "user_id" not in session:
-            print("There is an error while doing login_required")
-            return jsonify({"Error": "Authentication required"}), 401
+        # if request.method == 'OPTIONS':
+        #     return function(*args, **kwargs)
+            
+        # Get token from header
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            return jsonify({"error": "Missing Authorization header"}), 401
+            
+        # Format: "Bearer <token>"
+        try:
+            token = auth_header.split(' ')[1]
+        except IndexError:
+            return jsonify({"error": "Invalid Authorization header format"}), 401
+            
+        # Decode and validate token
+        user_id = decode_token(token)
+        if not user_id:
+            return jsonify({"error": "Invalid or expired token"}), 401
+            
+        # Add user_id to request context
+        request.user_id = user_id
         return function(*args, **kwargs)
     return decorated_function
+
 #===========================================================
-#Below are the CRUD operations for 
+#Below are the CRUD operations 
 
 #Below can be implemented in either MAIN.PY or ROUTER.PY
 # Initialize embedding model
@@ -413,8 +438,6 @@ def _prepare_results(docs: list[Document],
         return filtered_results, majority_source
     return filtered_results
 
-
-
 def _gemini_fallback(query: str, video_name: str) -> dict:
     """Generate fallback response using Gemini."""
     model = genai.GenerativeModel('gemini-1.5-pro')
@@ -459,14 +482,13 @@ def download_video_from_cloudinary(video_url):
         print(f"Error downloading video: {e}")
         return None
 
-@app.route('/upload-and-store', methods=['POST', 'OPTIONS'])
-@login_required
+@app.route('/upload-and-store', methods=['POST'])
+@jwt_required
 def upload_and_store():
-    if request.method == 'OPTIONS':
-        return '', 200
+    # if request.method == 'OPTIONS':
+    #     return '', 200
         
     data = request.get_json()
-    print(data)
     # Get metadata from form data
     title = request.form.get('title', data.get("public_id"))  # Use title or filename
     description = request.form.get('description', "")
@@ -529,21 +551,21 @@ def upload_and_store():
         "transcript": transcript
     })
 
-@app.route('/videos', methods=['GET', 'OPTIONS'])
-@login_required
+@app.route('/videos', methods=['GET'])
+@jwt_required
 def get_videos():
-    if request.method == 'OPTIONS':
-        return '', 200
+    # if request.method == 'OPTIONS':
+    #     return '', 200
         
     print(list(video_metadata.values()))
     return jsonify({"videos": list(video_metadata.keys())})
 
-@app.route('/preview', methods=['GET', 'OPTIONS'])
-@login_required
+@app.route('/preview', methods=['GET'])
+@jwt_required
 def get_preview():
     """Retrieve a list of uploaded videos from Cloudinary."""
-    if request.method == 'OPTIONS':
-        return '', 200
+    # if request.method == 'OPTIONS':
+    #     return '', 200
         
     try:
         return jsonify({"videos": list(video_metadata.values())})
@@ -551,11 +573,11 @@ def get_preview():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route('/query', methods=['POST', 'OPTIONS'])
-@login_required
+@app.route('/query', methods=['POST'])
+@jwt_required
 def query_video():
-    if request.method == 'OPTIONS':
-        return '', 200
+    # if request.method == 'OPTIONS':
+    #     return '', 200
         
     try:
         data = request.get_json()
