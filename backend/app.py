@@ -83,6 +83,8 @@ class User(db.Model):
     updated_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now(), onupdate=db.func.now())
     last_login = db.Column(db.DateTime(timezone=True), nullable=True, onupdate=db.func.now())
     is_active = db.Column(db.Boolean, default=False)
+
+    videos = db.relationship("Video", back_populates="user", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f'<User {self.username}>'
@@ -98,6 +100,74 @@ class User(db.Model):
             'last_login': self.last_login,
             'is_active': self.is_active 
         }
+
+class Video(db.Model):
+    __tablename__ = 'videos'
+    
+    video_id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = db.Column(UUID(as_uuid=True), db.ForeignKey('users.user_id', ondelete='CASCADE'), nullable=False)
+    title = db.Column(db.String(255), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    cloudinary_public_id = db.Column(db.String(255), nullable=False)
+    cloudinary_url = db.Column(db.Text, nullable=False)
+    cloudinary_resource_type = db.Column(db.String(50), nullable=True)
+    duration = db.Column(db.Numeric, nullable=True)
+    upload_date = db.Column(db.DateTime(timezone=True), server_default=db.func.now())
+    status = db.Column(db.String(50), default='active')
+    
+    # Add metadata fields similar to User
+    updated_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now(), onupdate=db.func.now())
+    view_count = db.Column(db.Integer, default=0)
+    
+    # Define relationship back to user
+    user = db.relationship("User", back_populates="videos")
+    
+    # Add validation for status field
+    __table_args__ = (
+        db.CheckConstraint(status.in_(['processing', 'active', 'archived']), name='status_check'),
+    )
+    
+    def __repr__(self):
+        return f'<Video {self.title} ({self.video_id})>'
+    
+    # Helper functions
+    def to_dict(self):
+        return {
+            'id': str(self.video_id),
+            'user_id': str(self.user_id),
+            'title': self.title,
+            'description': self.description,
+            'cloudinary_public_id': self.cloudinary_public_id,
+            'cloudinary_url': self.cloudinary_url,
+            'cloudinary_resource_type': self.cloudinary_resource_type,
+            'duration': float(self.duration) if self.duration else None,
+            'upload_date': self.upload_date.isoformat(),
+            'updated_at': self.updated_at.isoformat(),
+            'status': self.status,
+            'view_count': self.view_count,
+            'username': self.user.username if self.user else None
+        }
+    
+    def increment_view(self):
+        """Increment the view count for this video"""
+        self.view_count += 1
+        return self.view_count
+    
+    @property
+    def is_active(self):
+        """Check if the video is in active status"""
+        return self.status == 'active'
+    
+    @property
+    def formatted_duration(self):
+        """Return the duration in a human-readable format (minutes:seconds)"""
+        if not self.duration:
+            return "0:00"
+        
+        total_seconds = int(float(self.duration))
+        minutes = total_seconds // 60
+        seconds = total_seconds % 60
+        return f"{minutes}:{seconds:02d}"
 
 # JWT Token functions
 def generate_token(user_id):
@@ -150,17 +220,21 @@ def signup():
     
     # Hash the password
     password = bcrypt.generate_password_hash(password).decode('utf-8')
-    
+    print("It works fine before Table filling") 
     # Create a new user
     new_user = User(
         username=username,
         email=email,
         password=password
     )
+
+    print("It works fine after table filling")
     
     try:
         db.session.add(new_user)
+        print("It works fine after adding the changes (the new user)")
         db.session.commit()
+        print("It works fine after the commit too")
         
         return jsonify({
             'message': 'Registration successful! Please check your email to activate your account.',
@@ -482,39 +556,52 @@ def download_video_from_cloudinary(video_url):
         print(f"Error downloading video: {e}")
         return None
 
+def get_video_duration(cloudinary_api_resource):
+    try:
+        duration = cloudinary_api_resource.get("duration")
+        print(duration)
+        return duration
+    except Exception as e:
+        print(f"Error getting video duration: {str(e)}")
+
 @app.route('/upload-and-store', methods=['POST'])
 @jwt_required
 def upload_and_store():
-    # if request.method == 'OPTIONS':
-    #     return '', 200
-        
     data = request.get_json()
-    # Get metadata from form data
-    title = request.form.get('title', data.get("public_id"))  # Use title or filename
-    description = request.form.get('description', "")
     
-    video_name = title  
-    # Process video transcription
-    video = download_video_from_cloudinary(data.get("video_url"))
+    # Get metadata from request
+    title = data.get("title", data.get("public_id"))
+    description = data.get("description", "")
+    cloudinary_url = data.get("video_url")
+    cloudinary_public_id = data.get("public_id")
+    cloudinary_resource = cloudinary.api.resource(cloudinary_public_id, resource_type = "video")
+
+    if not cloudinary_url or not cloudinary_public_id:
+        return jsonify({"error": "Missing video URL or public ID"}), 400
+        
+    video_name = title
+    
+    # Get user ID from JWT token
+    user_id = request.user_id
+    
+    # Process video transcription (keeping your existing functionality)
+    duration = get_video_duration(cloudinary_resource)
+    video = download_video_from_cloudinary(cloudinary_url)
     transcript = transcribe_video(video)
     if not transcript:
         return jsonify({"error": "Transcription failed"}), 500
-
-    # Store directly with metadata
     
     # Check if video already exists
     if video_name in video_metadata:
         return jsonify({"error": "Video with this title already exists"}), 409
 
-    # Create and store vector DB
+    # Create and store vector DB (keeping your existing functionality)
     docs = create_documents(transcript, video_name)
-    
-    # Store to universal docs and individual index
     video_vector_dbs[video_name] = FAISS.from_documents(docs, embedding_model)
     global universal_docs
     universal_docs += docs
     
-    # Create/update the combined index
+    # Handle universal vector DB (keeping your existing functionality)
     try:
         if os.path.exists("faiss_indexes/all"):
             combined_db = FAISS.load_local("faiss_indexes/all", embedding_model)
@@ -526,28 +613,46 @@ def upload_and_store():
         video_vector_dbs["all"] = combined_db
     except Exception as e:
         print(f"Error updating combined index: {e}")
-        # Fallback to creating fresh combined index
         video_vector_dbs["all"] = FAISS.from_documents(universal_docs, embedding_model)
         video_vector_dbs["all"].save_local("faiss_indexes/all")
 
-    # Save individual index to disk
+    # Save individual index to disk (keeping your existing functionality)
     os.makedirs("faiss_indexes/individual", exist_ok=True)
     safe_video_name = re.sub(r'[^a-zA-Z0-9_-]', '_', video_name)
     video_vector_dbs[video_name].save_local(f"faiss_indexes/individual/{safe_video_name}")
-
-    # Store metadata last to ensure indexes are valid
+    
+    # Create Video record in the database
+    new_video = Video(
+        user_id=uuid.UUID(user_id),
+        title=title,
+        description=description,
+        cloudinary_public_id=cloudinary_public_id,
+        cloudinary_url=cloudinary_url,
+        cloudinary_resource_type="video",
+        status='active',
+        duration = duration
+    )
+    
+    db.session.add(new_video)
+    
+    # Store metadata for search functionality (your existing mechanism)
     video_metadata[video_name] = {
-        "publicID" : video_name,
+        "publicID": cloudinary_public_id,
         "transcript": transcript,
         "description": description,
         "processed": True,
         "index_path": f"faiss_indexes/individual/{safe_video_name}",
-        "video_url": data.get("video_url") 
+        "video_url": cloudinary_url,
+        "video_id": str(new_video.video_id),  # Add the database ID for reference
+        "duration": duration 
     }
+    
+    db.session.commit()
 
     return jsonify({
         "message": "Video uploaded and stored successfully",
         "video_name": video_name,
+        "video_id": str(new_video.video_id),
         "transcript": transcript
     })
 
