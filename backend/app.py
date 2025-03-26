@@ -106,7 +106,9 @@ class Video(db.Model):
     
     video_id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = db.Column(UUID(as_uuid=True), db.ForeignKey('users.user_id', ondelete='CASCADE'), nullable=False)
+    safe_name_for_vectordb = db.Column(db.String(255), nullable=True)
     title = db.Column(db.String(255), nullable=False)
+    transcript = db.Column(db.Text, nullable=True)
     description = db.Column(db.Text, nullable=True)
     cloudinary_public_id = db.Column(db.String(255), nullable=False)
     cloudinary_url = db.Column(db.Text, nullable=False)
@@ -463,22 +465,21 @@ def create_documents(transcript, video_name):
             for chunk, ts in zip(text_chunks, timestamps)]
     return docs
 
-def _get_vector_db(video_name: str) -> FAISS:
+def _get_vector_db(user_id, video_name: str, safe_video_name):
     """Get or create the appropriate vector database."""
     if video_name == "all":
-        if "all" not in video_vector_dbs and universal_docs:
-            video_vector_dbs["all"] = FAISS.from_documents(universal_docs, embedding_model)
-        return video_vector_dbs.get("all")
+        if not os.path.exists(f"faiss_indexes/{user_id}/all"):
+            print("There are no videos")
+            return None
+        return FAISS.load_local(f"faiss_indexes/{user_id}/all", embedding_model, allow_dangerous_deserialization=True)
     
-    if video_name not in video_vector_dbs:
-        if video_name in video_metadata and video_metadata[video_name].get("transcript"):
-            docs = create_documents(video_metadata[video_name]["transcript"], video_name)
-            video_vector_dbs[video_name] = FAISS.from_documents(docs, embedding_model)
-        else:
-            raise ValueError(f"Vector DB for {video_name} not found and couldn't be created")
-    
-    return video_vector_dbs[video_name]
+    individual_vector_db_path =f"faiss_indexes/{user_id}/individual/{safe_video_name}" 
 
+    if os.path.exists(individual_vector_db_path):
+        return FAISS.load_local(individual_vector_db_path, embedding_model, allow_dangerous_deserialization=True)
+    else:
+        raise ValueError(f"The video: {video_name} doesn't exist at {individual_vector_db_path}")
+     
 def _prepare_results(docs: list[Document], 
                     group_by_source: bool = False, 
                     get_majority_source: bool = False) -> tuple:
@@ -512,11 +513,12 @@ def _prepare_results(docs: list[Document],
         return filtered_results, majority_source
     return filtered_results
 
-def _gemini_fallback(query: str, video_name: str) -> dict:
+def _gemini_fallback(query: str, transcript: str) -> dict:
     """Generate fallback response using Gemini."""
     model = genai.GenerativeModel('gemini-1.5-pro')
-    context = "\n\n".join([v["transcript"] for v in video_metadata.values() if v.get("transcript")]) if video_name == "all" \
-        else video_metadata.get(video_name, {}).get("transcript", "")
+    # context = "\n\n".join([v["transcript"] for v in video_metadata.values() if v.get("transcript")]) if video_name == "all" \
+    #     else video_metadata.get(video_name, {}).get("transcript", "")
+    context = transcript
     
     if not context:
         return {
@@ -560,7 +562,7 @@ def download_video_from_cloudinary(video_url):
 @jwt_required
 def upload_and_store():
     data = request.get_json()
-    
+
     # Get metadata from request
     title = data.get("title", data.get("public_id"))
     description = data.get("description", "")
@@ -569,72 +571,75 @@ def upload_and_store():
 
     if not cloudinary_url or not cloudinary_public_id:
         return jsonify({"error": "Missing video URL or public ID"}), 400
-        
+
     video_name = title
-    
+
     # Get user ID from JWT token
     user_id = request.user_id
-    
+
     # Process video transcription (keeping your existing functionality)
     video = download_video_from_cloudinary(cloudinary_url)
     transcript = transcribe_video(video)
     if not transcript:
         return jsonify({"error": "Transcription failed"}), 500
-    
+
     # Check if video already exists
     if video_name in video_metadata:
         return jsonify({"error": "Video with this title already exists"}), 409
 
     # Create and store vector DB (keeping your existing functionality)
     docs = create_documents(transcript, video_name)
-    video_vector_dbs[video_name] = FAISS.from_documents(docs, embedding_model)
+    vector_db = FAISS.from_documents(docs, embedding_model)
+    video_vector_dbs[video_name] = vector_db
     global universal_docs
     universal_docs += docs
-    
+
     # Handle universal vector DB (keeping your existing functionality)
     try:
-        if os.path.exists("faiss_indexes/all"):
-            combined_db = FAISS.load_local("faiss_indexes/all", embedding_model)
-            combined_db.merge_from(video_vector_dbs[video_name])
+        if os.path.exists(f"faiss_indexes/{user_id}/all"):
+            combined_db = FAISS.load_local(f"faiss_indexes/{user_id}/all", embedding_model)
+            combined_db.merge_from(vector_db)
         else:
-            combined_db = FAISS.from_documents(universal_docs, embedding_model)
-        
-        combined_db.save_local("faiss_indexes/all")
+            combined_db = FAISS.from_documents(docs, embedding_model)
+
+        combined_db.save_local(f"faiss_indexes/{user_id}/all")
         video_vector_dbs["all"] = combined_db
     except Exception as e:
         print(f"Error updating combined index: {e}")
+        #hope we never hit this exception block
         video_vector_dbs["all"] = FAISS.from_documents(universal_docs, embedding_model)
-        video_vector_dbs["all"].save_local("faiss_indexes/all")
+        video_vector_dbs["all"].save_local(f"faiss_indexes/{user_id}/all")
 
     # Save individual index to disk (keeping your existing functionality)
-    os.makedirs("faiss_indexes/individual", exist_ok=True)
     safe_video_name = re.sub(r'[^a-zA-Z0-9_-]', '_', video_name)
-    video_vector_dbs[video_name].save_local(f"faiss_indexes/individual/{safe_video_name}")
-    
+    vector_db.save_local(f"faiss_indexes/{user_id}/individual/{safe_video_name}")
+
     # Create Video record in the database
     new_video = Video(
-        user_id=uuid.UUID(user_id),
+        user_id=user_id,
         title=title,
+        safe_name_for_vectordb=safe_video_name,
+        transcript=transcript,
         description=description,
         cloudinary_public_id=cloudinary_public_id,
         cloudinary_url=cloudinary_url,
         cloudinary_resource_type="video",
         status='active',
     )
-    
+
     db.session.add(new_video)
-    
+
     # Store metadata for search functionality (your existing mechanism)
     video_metadata[video_name] = {
         "publicID": cloudinary_public_id,
         "transcript": transcript,
         "description": description,
         "processed": True,
-        "index_path": f"faiss_indexes/individual/{safe_video_name}",
+        "index_path": f"faiss_indexes/individual/{safe_video_name}", #make sure to always have unique video names
         "video_url": cloudinary_url,
         "video_id": str(new_video.video_id),  # Add the database ID for reference
     }
-    
+
     db.session.commit()
 
     return jsonify({
@@ -659,9 +664,10 @@ def get_preview():
     """Retrieve a list of uploaded videos from Cloudinary."""
     # if request.method == 'OPTIONS':
     #     return '', 200
-        
+    user_videos = Video.query.filter_by(user_id = request.user_id).all()  
+    user_videos_list = [{"publicID": video.cloudinary_public_id, "description": video.description, "video_url": video.cloudinary_url} for video in user_videos]
     try:
-        return jsonify({"videos": list(video_metadata.values())})
+        return jsonify({"videos": user_videos_list})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -671,31 +677,32 @@ def get_preview():
 def query_video():
     # if request.method == 'OPTIONS':
     #     return '', 200
-        
+    user_id = request.user_id 
     try:
         data = request.get_json()
         query = data['query']
         video_name = data['video_name']
+        safe_video_name = Video.query.filter_by(user_id=user_id, title=video_name).first().safe_name_for_vectordb if video_name != "all" else None
 
         # Validate inputs
         if not query or not video_name:
             return jsonify({"error": "Missing query or video_name"}), 400
-        
+
         # Handle "all videos" special case
-        if video_name == "all" and not video_vector_dbs.get("all"):
-            if not universal_docs:
-                return jsonify({"error": "No videos available"}), 404
-            video_vector_dbs["all"] = FAISS.from_documents(universal_docs, embedding_model)
+        # if video_name == "all" and not video_vector_dbs.get("all"):
+        #     if not universal_docs:
+        #         return jsonify({"error": "No videos available"}), 404
+        #     video_vector_dbs["all"] = FAISS.from_documents(universal_docs, embedding_model)
 
         # Get appropriate vector DB
-        vector_db = _get_vector_db(video_name)
+        vector_db = _get_vector_db(user_id, video_name, safe_video_name)
         if not vector_db:
             return jsonify({"error": "Video data not available"}), 404
 
         # Perform similarity search
         search_k = 1 if video_name == "all" else 3
         docs = vector_db.similarity_search(query, k=search_k)
-        
+
         # Prepare results in uniform format
         filtered_results, majority_source = _prepare_results(
             docs=docs,
@@ -705,9 +712,10 @@ def query_video():
 
         # Determine final video source for Gemini
         final_source = majority_source if video_name == "all" else video_name
-        
+
+        transcript = Video.query.filter_by(user_id = user_id, title = final_source).first().transcript
         # Generate response using the determined source
-        content = _gemini_fallback(query, final_source)
+        content = _gemini_fallback(query, transcript)
         results = {
             "content": content,
             "timestamp": filtered_results[0]["timestamp"],
@@ -722,6 +730,134 @@ def query_video():
         app.logger.error(f"Query error: {str(e)}")
 
         return jsonify({"error": "Processing failed"}), 500
+
+# @app.route('/query', methods=['POST'])
+# @jwt_required
+# def query_video():
+#     # if request.method == 'OPTIONS':
+#     #     return '', 200
+#     user_id = request.user_id 
+#     print(f"[DEBUG] Query request received for user_id: {user_id}")
+#
+#     try:
+#         data = request.get_json()
+#         print(f"[DEBUG] Request data: {data}")
+#
+#         query = data['query']
+#         video_name = data['video_name']
+#         print(f"[DEBUG] Query: '{query}', Video name: '{video_name}'")
+#
+#         if video_name != "all":
+#             video_record = Video.query.filter_by(user_id=user_id, title=video_name).first()
+#             if video_record:
+#                 safe_video_name = video_record.safe_name_for_vectordb
+#                 print(f"[DEBUG] Found safe_video_name: {safe_video_name} for video: {video_name}")
+#             else:
+#                 print(f"[DEBUG] WARNING: No video record found for title: {video_name}")
+#                 safe_video_name = None
+#         else:
+#             safe_video_name = None
+#             print(f"[DEBUG] Using 'all' videos mode, safe_video_name set to None")
+#
+#         # Validate inputs
+#         if not query or not video_name:
+#             print(f"[DEBUG] Error: Missing query or video_name")
+#             return jsonify({"error": "Missing query or video_name"}), 400
+#
+#         # Handle "all videos" special case
+#         # if video_name == "all":
+#         #     print(f"[DEBUG] Processing 'all videos' case")
+#         #     if not video_vector_dbs.get("all"):
+#         #         print(f"[DEBUG] 'all' vector DB not in memory")
+#         #         if not universal_docs:
+#         #             print(f"[DEBUG] Error: No universal_docs available")
+#         #             return jsonify({"error": "No videos available"}), 404
+#         #         print(f"[DEBUG] Creating 'all' vector DB from {len(universal_docs)} universal docs")
+#         #         video_vector_dbs["all"] = FAISS.from_documents(universal_docs, embedding_model)
+#         #         print(f"[DEBUG] Successfully created 'all' vector DB")
+#
+#         # Get appropriate vector DB
+#         print(f"[DEBUG] Calling _get_vector_db for user_id: {user_id}, video_name: {video_name}, safe_video_name: {safe_video_name}")
+#         vector_db = _get_vector_db(user_id, video_name, safe_video_name)
+#
+#         if vector_db:
+#             print(f"[DEBUG] Successfully retrieved vector DB")
+#             if hasattr(vector_db, 'index') and hasattr(vector_db.index, 'ntotal'):
+#                 print(f"[DEBUG] Vector DB contains {vector_db.index.ntotal} vectors")
+#         else:
+#             print(f"[DEBUG] Error: Vector DB not found for {video_name}")
+#             return jsonify({"error": "Video data not available"}), 404
+#
+#         # Perform similarity search
+#         search_k = 1 if video_name == "all" else 3
+#         print(f"[DEBUG] Performing similarity search with k={search_k}")
+#
+#         try:
+#             docs = vector_db.similarity_search(query, k=search_k)
+#             print(f"[DEBUG] Similarity search returned {len(docs)} documents")
+#             for i, doc in enumerate(docs):
+#                 print(f"[DEBUG] Doc {i+1}: Source={doc.metadata.get('source')}, Timestamp={doc.metadata.get('timestamp')}")
+#                 print(f"[DEBUG] Content preview: {doc.page_content[:50]}...")
+#         except Exception as search_error:
+#             print(f"[DEBUG] ERROR in similarity search: {str(search_error)}")
+#             raise
+#
+#         # Prepare results in uniform format
+#         print(f"[DEBUG] Calling _prepare_results with {len(docs)} docs, group_by_source={video_name == 'all'}")
+#         filtered_results, majority_source = _prepare_results(
+#             docs=docs,
+#             group_by_source=(video_name == "all"),
+#             get_majority_source=True
+#         )
+#         print(f"[DEBUG] _prepare_results returned {len(filtered_results)} results. Majority source: {majority_source}")
+#
+#         # Determine final video source for Gemini
+#         final_source = majority_source if video_name == "all" else video_name
+#         print(f"[DEBUG] Final source for Gemini: {final_source}")
+#
+#         # Get transcript
+#         print(f"[DEBUG] Fetching transcript for {video_name}")
+#         transcript_record = Video.query.filter_by(user_id=user_id, title=final_source).first()
+#
+#         if transcript_record and transcript_record.transcript:
+#             transcript = transcript_record.transcript
+#             print(f"[DEBUG] Found transcript of length: {len(transcript)}")
+#             print(f"[DEBUG] Transcript preview: {transcript[:100]}...")
+#         else:
+#             print(f"[DEBUG] WARNING: No transcript found for {video_name}")
+#             transcript = ""
+#
+#         # Generate response using the determined source
+#         print(f"[DEBUG] Calling _gemini_fallback with query and transcript")
+#         content = _gemini_fallback(query, transcript)
+#         print(f"[DEBUG] _gemini_fallback returned response of length: {len(content)}")
+#
+#         if not filtered_results:
+#             print(f"[DEBUG] WARNING: filtered_results is empty, cannot access timestamp")
+#             timestamp = None
+#         else:
+#             timestamp = filtered_results[0]["timestamp"]
+#             print(f"[DEBUG] Using timestamp: {timestamp}")
+#
+#         results = {
+#             "content": content,
+#             "timestamp": timestamp,
+#             "source": final_source
+#         }
+#         print(f"[DEBUG] Final results prepared: {results}")
+#
+#         return jsonify({"results": [results]})
+#
+#     except KeyError as e:
+#         print(f"[DEBUG] KeyError: Missing required field: {str(e)}")
+#         return jsonify({"error": f"Missing required field: {str(e)}"}), 400
+#     except Exception as e:
+#         error_msg = f"Query error: {str(e)}"
+#         print(f"[DEBUG] CRITICAL ERROR: {error_msg}")
+#         import traceback
+#         print(f"[DEBUG] Traceback: {traceback.format_exc()}")
+#         app.logger.error(error_msg)
+#         return jsonify({"error": "Processing failed"}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
