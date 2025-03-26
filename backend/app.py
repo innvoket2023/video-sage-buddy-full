@@ -620,7 +620,6 @@ def upload_and_store():
         cloudinary_url=cloudinary_url,
         cloudinary_resource_type="video",
         status='active',
-        duration = duration
     )
     
     db.session.add(new_video)
@@ -634,7 +633,6 @@ def upload_and_store():
         "index_path": f"faiss_indexes/individual/{safe_video_name}",
         "video_url": cloudinary_url,
         "video_id": str(new_video.video_id),  # Add the database ID for reference
-        "duration": duration 
     }
     
     db.session.commit()
