@@ -556,14 +556,6 @@ def download_video_from_cloudinary(video_url):
         print(f"Error downloading video: {e}")
         return None
 
-def get_video_duration(cloudinary_api_resource):
-    try:
-        duration = cloudinary_api_resource.get("duration")
-        print(duration)
-        return duration
-    except Exception as e:
-        print(f"Error getting video duration: {str(e)}")
-
 @app.route('/upload-and-store', methods=['POST'])
 @jwt_required
 def upload_and_store():
@@ -574,7 +566,6 @@ def upload_and_store():
     description = data.get("description", "")
     cloudinary_url = data.get("video_url")
     cloudinary_public_id = data.get("public_id")
-    cloudinary_resource = cloudinary.api.resource(cloudinary_public_id, resource_type = "video")
 
     if not cloudinary_url or not cloudinary_public_id:
         return jsonify({"error": "Missing video URL or public ID"}), 400
@@ -585,7 +576,6 @@ def upload_and_store():
     user_id = request.user_id
     
     # Process video transcription (keeping your existing functionality)
-    duration = get_video_duration(cloudinary_resource)
     video = download_video_from_cloudinary(cloudinary_url)
     transcript = transcribe_video(video)
     if not transcript:
