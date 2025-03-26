@@ -193,6 +193,35 @@ def decode_token(token):
 
 #Below are the CRUD operations for LOGIN/SIGNUP (USER TABLE)
 #===========================================================
+# JWT auth decorator to replace login_required
+def jwt_required(function):
+    @wraps(function)
+    def decorated_function(*args, **kwargs):
+        # if request.method == 'OPTIONS':
+        #     return function(*args, **kwargs)
+            
+        # Get token from header
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            return jsonify({"error": "Missing Authorization header"}), 401
+            
+        # Format: "Bearer <token>"
+        try:
+            token = auth_header.split(' ')[1]
+        except IndexError:
+            return jsonify({"error": "Invalid Authorization header format"}), 401
+            
+        # Decode and validate token
+        user_id = decode_token(token)
+        if not user_id:
+            return jsonify({"error": "Invalid or expired token"}), 401
+            
+        # Add user_id to request context
+        request.user_id = user_id
+        return function(*args, **kwargs)
+    return decorated_function
+
+#===========================================================
 
 bcrypt = Bcrypt(app)
 
@@ -363,6 +392,47 @@ def request_password_reset():
     
     return jsonify({'message': 'If your email exists in our system, you will receive a password reset link'}), 200
 
+@app.route('/api/reset-email-uname', methods = ["PUT"])
+@jwt_required  # Assuming you're using JWT for authentication
+def update_user(user_id):
+    # Get the JSON data from the request body
+    data = request.get_json()
+    
+    # Validate the required fields
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+        
+    # Extract the fields you want to update
+    username = data.get('username')
+    email = data.get('email')
+    try:
+        # Find the user in the database
+        user = User.query.get(user_id)
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+        
+        # Update the user's information
+        if username:
+            user.username = username
+        if email:
+            user.email = email
+        
+        # Save the changes
+        db.session.commit()
+        
+        return jsonify({
+            "message": "User updated successfully",
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "email": user.email
+            }
+        })
+    
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
 # Logout function - just a placeholder since JWT is stateless
 @app.route('/api/logout', methods=['POST'])
 def logout():
@@ -372,35 +442,6 @@ def logout():
     # JWT is stateless, so no server-side logout is needed
     # Client should discard the token
     return jsonify({'message': 'Logged out successfully'}), 200
-
-#===========================================================
-# JWT auth decorator to replace login_required
-def jwt_required(function):
-    @wraps(function)
-    def decorated_function(*args, **kwargs):
-        # if request.method == 'OPTIONS':
-        #     return function(*args, **kwargs)
-            
-        # Get token from header
-        auth_header = request.headers.get('Authorization')
-        if not auth_header:
-            return jsonify({"error": "Missing Authorization header"}), 401
-            
-        # Format: "Bearer <token>"
-        try:
-            token = auth_header.split(' ')[1]
-        except IndexError:
-            return jsonify({"error": "Invalid Authorization header format"}), 401
-            
-        # Decode and validate token
-        user_id = decode_token(token)
-        if not user_id:
-            return jsonify({"error": "Invalid or expired token"}), 401
-            
-        # Add user_id to request context
-        request.user_id = user_id
-        return function(*args, **kwargs)
-    return decorated_function
 
 #===========================================================
 #Below are the CRUD operations 
@@ -730,134 +771,6 @@ def query_video():
         app.logger.error(f"Query error: {str(e)}")
 
         return jsonify({"error": "Processing failed"}), 500
-
-# @app.route('/query', methods=['POST'])
-# @jwt_required
-# def query_video():
-#     # if request.method == 'OPTIONS':
-#     #     return '', 200
-#     user_id = request.user_id 
-#     print(f"[DEBUG] Query request received for user_id: {user_id}")
-#
-#     try:
-#         data = request.get_json()
-#         print(f"[DEBUG] Request data: {data}")
-#
-#         query = data['query']
-#         video_name = data['video_name']
-#         print(f"[DEBUG] Query: '{query}', Video name: '{video_name}'")
-#
-#         if video_name != "all":
-#             video_record = Video.query.filter_by(user_id=user_id, title=video_name).first()
-#             if video_record:
-#                 safe_video_name = video_record.safe_name_for_vectordb
-#                 print(f"[DEBUG] Found safe_video_name: {safe_video_name} for video: {video_name}")
-#             else:
-#                 print(f"[DEBUG] WARNING: No video record found for title: {video_name}")
-#                 safe_video_name = None
-#         else:
-#             safe_video_name = None
-#             print(f"[DEBUG] Using 'all' videos mode, safe_video_name set to None")
-#
-#         # Validate inputs
-#         if not query or not video_name:
-#             print(f"[DEBUG] Error: Missing query or video_name")
-#             return jsonify({"error": "Missing query or video_name"}), 400
-#
-#         # Handle "all videos" special case
-#         # if video_name == "all":
-#         #     print(f"[DEBUG] Processing 'all videos' case")
-#         #     if not video_vector_dbs.get("all"):
-#         #         print(f"[DEBUG] 'all' vector DB not in memory")
-#         #         if not universal_docs:
-#         #             print(f"[DEBUG] Error: No universal_docs available")
-#         #             return jsonify({"error": "No videos available"}), 404
-#         #         print(f"[DEBUG] Creating 'all' vector DB from {len(universal_docs)} universal docs")
-#         #         video_vector_dbs["all"] = FAISS.from_documents(universal_docs, embedding_model)
-#         #         print(f"[DEBUG] Successfully created 'all' vector DB")
-#
-#         # Get appropriate vector DB
-#         print(f"[DEBUG] Calling _get_vector_db for user_id: {user_id}, video_name: {video_name}, safe_video_name: {safe_video_name}")
-#         vector_db = _get_vector_db(user_id, video_name, safe_video_name)
-#
-#         if vector_db:
-#             print(f"[DEBUG] Successfully retrieved vector DB")
-#             if hasattr(vector_db, 'index') and hasattr(vector_db.index, 'ntotal'):
-#                 print(f"[DEBUG] Vector DB contains {vector_db.index.ntotal} vectors")
-#         else:
-#             print(f"[DEBUG] Error: Vector DB not found for {video_name}")
-#             return jsonify({"error": "Video data not available"}), 404
-#
-#         # Perform similarity search
-#         search_k = 1 if video_name == "all" else 3
-#         print(f"[DEBUG] Performing similarity search with k={search_k}")
-#
-#         try:
-#             docs = vector_db.similarity_search(query, k=search_k)
-#             print(f"[DEBUG] Similarity search returned {len(docs)} documents")
-#             for i, doc in enumerate(docs):
-#                 print(f"[DEBUG] Doc {i+1}: Source={doc.metadata.get('source')}, Timestamp={doc.metadata.get('timestamp')}")
-#                 print(f"[DEBUG] Content preview: {doc.page_content[:50]}...")
-#         except Exception as search_error:
-#             print(f"[DEBUG] ERROR in similarity search: {str(search_error)}")
-#             raise
-#
-#         # Prepare results in uniform format
-#         print(f"[DEBUG] Calling _prepare_results with {len(docs)} docs, group_by_source={video_name == 'all'}")
-#         filtered_results, majority_source = _prepare_results(
-#             docs=docs,
-#             group_by_source=(video_name == "all"),
-#             get_majority_source=True
-#         )
-#         print(f"[DEBUG] _prepare_results returned {len(filtered_results)} results. Majority source: {majority_source}")
-#
-#         # Determine final video source for Gemini
-#         final_source = majority_source if video_name == "all" else video_name
-#         print(f"[DEBUG] Final source for Gemini: {final_source}")
-#
-#         # Get transcript
-#         print(f"[DEBUG] Fetching transcript for {video_name}")
-#         transcript_record = Video.query.filter_by(user_id=user_id, title=final_source).first()
-#
-#         if transcript_record and transcript_record.transcript:
-#             transcript = transcript_record.transcript
-#             print(f"[DEBUG] Found transcript of length: {len(transcript)}")
-#             print(f"[DEBUG] Transcript preview: {transcript[:100]}...")
-#         else:
-#             print(f"[DEBUG] WARNING: No transcript found for {video_name}")
-#             transcript = ""
-#
-#         # Generate response using the determined source
-#         print(f"[DEBUG] Calling _gemini_fallback with query and transcript")
-#         content = _gemini_fallback(query, transcript)
-#         print(f"[DEBUG] _gemini_fallback returned response of length: {len(content)}")
-#
-#         if not filtered_results:
-#             print(f"[DEBUG] WARNING: filtered_results is empty, cannot access timestamp")
-#             timestamp = None
-#         else:
-#             timestamp = filtered_results[0]["timestamp"]
-#             print(f"[DEBUG] Using timestamp: {timestamp}")
-#
-#         results = {
-#             "content": content,
-#             "timestamp": timestamp,
-#             "source": final_source
-#         }
-#         print(f"[DEBUG] Final results prepared: {results}")
-#
-#         return jsonify({"results": [results]})
-#
-#     except KeyError as e:
-#         print(f"[DEBUG] KeyError: Missing required field: {str(e)}")
-#         return jsonify({"error": f"Missing required field: {str(e)}"}), 400
-#     except Exception as e:
-#         error_msg = f"Query error: {str(e)}"
-#         print(f"[DEBUG] CRITICAL ERROR: {error_msg}")
-#         import traceback
-#         print(f"[DEBUG] Traceback: {traceback.format_exc()}")
-#         app.logger.error(error_msg)
-#         return jsonify({"error": "Processing failed"}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
