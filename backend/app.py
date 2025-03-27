@@ -396,9 +396,10 @@ def request_password_reset():
 @jwt_required
 def get_email_uname():
     user_id = request.user_id
-    username = User.query.filter_by(user_id).first().username
-    email = User.query.filter_by(user_id).first().email
-    return jsonify({"username": username, "email": email})
+    user = User.query.filter_by(user_id=user_id).first()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    return jsonify({"username": user.username, "email": user.email})
 
 @app.route('/api/reset-email-uname', methods=['PUT'])
 @jwt_required
