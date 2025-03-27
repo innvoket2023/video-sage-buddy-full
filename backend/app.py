@@ -392,9 +392,12 @@ def request_password_reset():
     
     return jsonify({'message': 'If your email exists in our system, you will receive a password reset link'}), 200
 
-@app.route('/api/reset-email-uname', methods = ["PUT"])
-@jwt_required  # Assuming you're using JWT for authentication
-def update_user(user_id):
+@app.route('/api/reset-email-uname', methods=['PUT'])
+@jwt_required
+def update_user():
+    # Get the user_id from the request context set by jwt_required
+    user_id = request.user_id
+    
     # Get the JSON data from the request body
     data = request.get_json()
     
@@ -422,13 +425,12 @@ def update_user(user_id):
         
         return jsonify({
             "message": "User updated successfully",
-            "user": {
-                "id": user.id,
-                "username": user.username,
-                "email": user.email
-            }
+            "user": user.to_dict()
         })
     
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"error": "Username or email already exists"}), 409
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 500
