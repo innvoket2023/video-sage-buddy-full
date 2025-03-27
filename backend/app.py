@@ -392,6 +392,14 @@ def request_password_reset():
     
     return jsonify({'message': 'If your email exists in our system, you will receive a password reset link'}), 200
 
+@app.route('/api/get_email_uname', methods = ['GET'])
+@jwt_required
+def get_email_uname():
+    user_id = request.user_id
+    username = User.query.filter_by(user_id).first().username
+    email = User.query.filter_by(user_id).first().email
+    return jsonify({"username": username, "email": email})
+
 @app.route('/api/reset-email-uname', methods=['PUT'])
 @jwt_required
 def update_user():
@@ -444,7 +452,6 @@ def logout():
     # JWT is stateless, so no server-side logout is needed
     # Client should discard the token
     return jsonify({'message': 'Logged out successfully'}), 200
-
 #===========================================================
 #Below are the CRUD operations 
 
