@@ -3,6 +3,7 @@ from flask_cors import CORS
 import re
 import os
 import tempfile
+import config
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
@@ -25,6 +26,8 @@ import datetime
 import secrets
 import uuid
 import jwt  # New import for JWT
+#Blueprints are imported below 
+from app import models
 
 load_dotenv()
 
@@ -71,7 +74,22 @@ db = SQLAlchemy(app)
 #     return response
 
 #Below can be implemented in MODEL.PY
-    
+def create_app(config_name = "development"):
+    #Why object initializations are not the part of this flask factory? because those objects can directly be imported in other blueprints if they are outside
+    app.config.from_object(config.config_dict[config_name])
+
+    #CORS are used for bypassing doamin restrictions for the mentioned parameters (eg. origins, headers)
+    CORS(app, 
+        resources={r"/*": {
+            "origins": ["http://localhost:8080", "http://localhost:3000", "http://localhost:5000"],
+            "supports_credentials": True,
+            "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"]
+        }})
+
+    #Below are the blueprints that i have created, to check each, 
+    app.register_blueprint(models)
+
+
 class User(db.Model):
     __tablename__ = 'users'
     
