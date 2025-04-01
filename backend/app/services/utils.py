@@ -16,11 +16,16 @@ def get_sorted_audio_with_duration(files, min_duration = 0, max_duration = 30):
             sorted_files_by_duration.append((file, duration))
         else:
             continue
-        return sorted(sorted_files_by_duration, key=lambda x: x[1])
+    return sorted(sorted_files_by_duration, key=lambda x: x[1])
 
 def get_audio_segment_files_from_dir(dir_path):
     files = []
-    for file in os.listdir(dir_path):
-        if file.isfile() and file.name.lower().endswith('.wav') and file.name != "audio.wav":
-            files.append(file)
+    for file in os.scandir(dir_path):
+        if file.is_file() and file.name.lower().endswith('.wav') and file.name != "audio.wav":
+            files.append(file.path)
+    return files
             
+
+if __name__ == "__main__":
+    list_dir = get_audio_segment_files_from_dir(r"C:\Users\Ansh\Desktop\coding\video-sage-buddy-full\backend\segments")
+    print(get_sorted_audio_with_duration(list_dir))

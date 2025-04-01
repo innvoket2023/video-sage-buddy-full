@@ -6,14 +6,18 @@ import webrtcvad
 import collections
 import contextlib
 import sys
+import os
 from pydub import AudioSegment
 
-def extract_audio(input_video_path, output_audio_path):
+
+def extract_audio(input_video_path, output_audio_path, output_audio_name):
     video_file = VideoFileClip(input_video_path) 
+    full_path = os.path.join(output_audio_path, output_audio_name)
     audio_file = video_file.audio
-    audio_file.write_audiofile(output_audio_path, fps = 16000, nbytes = 2, codec = "pcm_s16le", bitrate = "256k")
+    audio_file.write_audiofile(full_path, fps = 16000, nbytes = 2, codec = "pcm_s16le", bitrate = "256k")
     audio_file.close()
     video_file.close()
+    convert_to_mono(full_path)
 
 def convert_to_mono(path):
     sound = AudioSegment.from_wav(path)
@@ -34,7 +38,8 @@ def read_wave(path):
     with contextlib.closing(wave.open(path, 'rb')) as wf:
         num_channels = wf.getnchannels()
         if not num_channels == 1:
-            convert_to_mono(path)
+            pass
+            # convert_to_mono(path)
             # print(f"Issue in number of channels: {num_channels}")
         sample_width = wf.getsampwidth()
         if not sample_width == 2:
@@ -47,12 +52,16 @@ def read_wave(path):
         pcm_data = wf.readframes(wf.getnframes())
         return pcm_data, sample_rate
 
-def write_wave(path, audio, sample_rate):
-    """Writes a .wav file.
-
-    Takes path, PCM audio data, and sample rate.
-    """
-    with contextlib.closing(wave.open(path, 'wb')) as wf:
+def write_wave(filename, output_dir, audio, sample_rate):
+    """Writes a .wav file to 'segments' subdirectory."""
+    segments_dir = os.path.join(output_dir, "segments")
+    
+    # Create only the directory (not including the filename)
+    os.makedirs(segments_dir, exist_ok=True)  
+    
+    full_path = os.path.join(segments_dir, filename)
+    
+    with contextlib.closing(wave.open(full_path, 'wb')) as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)
         wf.setframerate(sample_rate)
@@ -160,19 +169,21 @@ def vad_collector(sample_rate, frame_duration_ms,
     if voiced_frames:
         yield b''.join([f.bytes for f in voiced_frames])
 
-def create_audio_segments(input_audio_path, output_audio_path, aggressiveness = 0):
-    extract_audio(input_audio_path, output_audio_path)
-    audio, sample_rate = read_wave(output_audio_path)
+def create_audio_segments(input_audio_path, output_audio_path=os.getcwd(), output_audio_name="audio.wav", aggressiveness=0):
+    extract_audio(input_audio_path, output_audio_path, output_audio_name)
+    full_path = os.path.join(output_audio_path, output_audio_name)
+    audio, sample_rate = read_wave(full_path)
     vad = webrtcvad.Vad(aggressiveness)
-    frames = frame_generator(30, audio, sample_rate)
-    frames = list(frames)
+    frames = list(frame_generator(30, audio, sample_rate))
     segments = vad_collector(sample_rate, 30, 300, vad, frames)
+    
     for i, segment in enumerate(segments):
-        path = 'chunk-%002d.wav' % (i,)
-        print(' Writing %s' % (path,))
-        write_wave(path, segment, sample_rate)
+        segment_name = f'chunk-{i:03d}.wav'  # Fixed filename format
+        print(f'Writing {segment_name}')
+        write_wave(segment_name, output_audio_path, segment, sample_rate)
 
 if __name__ == '__main__':
     input_audio_path = r"C:\Users\Ansh\Downloads\Tcs_coding_test.mp4" 
-    output_audio_path = "audio.wav"
-    create_audio_segments(input_audio_path, output_audio_path)
+    # output_audio_path = os.getcwd()
+    # output_audio_name = "audio.wav"
+    create_audio_segments(input_audio_path)
