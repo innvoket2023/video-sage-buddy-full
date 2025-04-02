@@ -45,4 +45,6 @@ db/
 faiss_indexes/
 flask_session/
 segments/
+*.wav
+*.mp3
 
