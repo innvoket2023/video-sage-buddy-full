@@ -29,10 +29,11 @@ def text_to_speech(voice_id, text, model_id = None, output_path = os.getcwd()):
     text="The first move is what sets everything in motion.",
     model_id="eleven_multilingual_v2",
 )
-    dir= os.path.join(output_path, voice_id)
+    dir= os.path.join(output_path, "generated_audio")
     os.makedirs(dir, exist_ok=True)
     full_path_to_audio_file = os.path.join(dir, "test.mp3")
     save(audio, full_path_to_audio_file) 
+    return full_path_to_audio_file
 
 def delete_voice(voice_id):
     client.voices.delete(

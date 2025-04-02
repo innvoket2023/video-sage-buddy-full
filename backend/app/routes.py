@@ -4,7 +4,7 @@ from app.extensions import db
 from app.services.audio_segmentation import create_audio_segments
 from app.services.auth_service import decode_token
 from app.auth_routes import jwt_required
-from app.services.elevenlabsIO import create_voice_clones
+from app.services.elevenlabsIO import create_voice_clones, text_to_speech
 from app.services.video_processing import (
     download_video_from_cloudinary, transcribe_video, create_documents,
     get_vector_db, prepare_results, gemini_fallback
@@ -15,6 +15,7 @@ import os
 from sqlalchemy.exc import IntegrityError
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
+from flask import send_file
 import datetime
 
 # Create blueprint
@@ -249,7 +250,7 @@ def create_clone():
 
             return jsonify({
                 "message": "Voice ID created and assigned to the video successfully",
-                "audio_id": audio_id
+                "video_id": video.video_id
             }), 200
         except Exception as e:
             return jsonify({"error": f"Audio processing failed: {e}"}), 500
@@ -259,7 +260,59 @@ def create_clone():
         current_app.logger.error(f"An error occurred: {e}")
         return jsonify({"error": f"An unexpected error occurred: {e}"}), 500
 
-@app_bp.route('/')
+@app_bp.route('/speak_message', methods=["POST"])
+@jwt_required
+def speak_message():
+    try:
+        data = request.get_json()
+        video_url = data.get("video_url")
+        message = data.get("message")
+
+        if not video_url or not message:
+            return jsonify({"message": "Missing video_url or message in request data", "status": "missing_params"}), 400
+
+        video = Video.query.filter_by(cloudinary_url=video_url).first()
+
+        if not video:
+            return jsonify({"message": f"Video with URL '{video_url}' not found", "status": "video_not_found"}), 404
+
+        voice_id = video.audio_id
+
+        if not voice_id:
+            return jsonify({
+                "message": "Video does not have an assigned voice_id",
+                "status": "no_voice_id",
+                "code": "video_missing_voice_id"
+            }), 400
+
+        path_to_audio_processing = os.path.join(os.getcwd(), str(video.video_id), str(voice_id), "generated_output")
+
+        try:
+            os.makedirs(path_to_audio_processing, exist_ok=True)
+        except OSError as e:
+            return jsonify({"message": f"Failed to create directories: {e}", "status": "directory_creation_failed"}), 500
+
+        try:
+            output_file_path = text_to_speech(
+                voice_id=voice_id,
+                text=message,
+                output_path=path_to_audio_processing
+            )
+
+            if not output_file_path:
+                return jsonify({"message": "Text-to-speech processing failed to produce output", "status": "tts_failed"}), 500
+
+            return send_file(
+                output_file_path,
+                mimetype='audio/mpeg'  # Adjust mimetype as needed ('audio/wav', etc.)
+            )
+        except Exception as e:
+            return jsonify({"message": f"Text-to-speech processing failed: {e}", "status": "tts_failed"}), 500
+
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"An unexpected error occurred: {e}")
+        return jsonify({"message": "An unexpected error occurred", "status": "unexpected_error"}), 500
     
 @app_bp.route('/api/mock', methods=["GET"])
 def mock():
