@@ -1,1 +1,48 @@
+# Bytecode and Compiled Files
+*.pyc
+__pycache__/
+
+# Distribution / Packaging
+dist/
+build/
+*.egg-info/
+
+# Virtual Environment
+.venv/
+venv/
+env/
+ENV/
+myenv/
+
+# OS generated files
+.DS_Store
+
+# Log files
+*.log
+logs/
+
+# Secrets/Credentials
+*.key
+*.pem
+config.ini  # Only if it contains secrets
+secrets.json # Only if it contains secrets
 .env
+
+#Temporary files
+*.tmp
+
+#IDE
+.idea/
+*.swp
+
+#For tests
+.coverage
+
+#Agentic DB
+db/
+
+#Project specific
+faiss_indexes/
+flask_session/
+segments/
+
