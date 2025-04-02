@@ -206,82 +206,61 @@ def query_video():
 @jwt_required
 def create_clone():
     try:
-        print("Attempting to create clone...")
-
         data = request.get_json()
-        print(f"Received data: {data}")
-
         cloudinary_url = data.get("cloudinary_url")
 
         if not cloudinary_url:
-            print("Error: Missing cloudinary_url in request data")
             return jsonify({"error": "Missing cloudinary_url in request data"}), 400
 
         video = Video.query.filter_by(cloudinary_url=cloudinary_url).first()
 
         if not video:
-            print(f"Error: Video with URL '{cloudinary_url}' not found")
             return jsonify({"error": f"Video with URL '{cloudinary_url}' not found"}), 404
 
-        print(f"Found video: {video.video_id}, checking for voice_id...")
-
-        if video.audio_id is not None:
-            print("Video already has voice_id, returning conflict...")
+        if video.voice_id is not None:
             return jsonify({
                 "message": "Video already has a voice_id. Cannot assign a new one.",
                 "status": "conflict",
                 "code": "video_voice_id_exists"
             }), 409
 
-        print(f"Downloading video from Cloudinary: {video.cloudinary_url}")
         downloaded_video = download_video_from_cloudinary(video.cloudinary_url)
 
         if not downloaded_video:
-            print("Error: Failed to download video from Cloudinary")
             return jsonify({"error": "Failed to download video from Cloudinary"}), 500
 
         path_to_audio_processing = os.path.join(os.getcwd(), str(video.video_id))
-        print(f"Creating path: {path_to_audio_processing}")
 
         try:
             os.makedirs(path_to_audio_processing, exist_ok=True)
         except OSError as e:
-            print(f"Error: Failed to create directories: {e}")
             return jsonify({"error": f"Failed to create directories: {e}"}), 500
 
         try:
-            print(f"Calling create_audio_segments with {downloaded_video} and {path_to_audio_processing}")
-
             create_audio_segments(downloaded_video, path_to_audio_processing)
             audio_segments_dir = os.path.join(path_to_audio_processing, "segments")
             audio_files = utils.get_audio_segment_files_from_dir(audio_segments_dir)
             audio_files_with_duration = utils.get_sorted_audio_with_duration(audio_files)
 
-            print(f"Creating voice clone with file: {audio_files_with_duration[0][0]} and title: {video.title}")
-            voice_id = create_voice_clones([audio_files_with_duration[0][0]], video.title)
+            voice_id = create_voice_clones([audio_files_with_duration[0][0]], video.title).voice_id
 
             if not voice_id:
-                print("Error: Failed to create voice clone")
                 return jsonify({"error": "Failed to create voice clone"}), 500
 
             video.voice_id = voice_id
             db.session.commit()
-
-            print(f"Voice ID '{voice_id}' assigned to video {video.video_id}, returning success")
 
             return jsonify({
                 "message": "Voice ID created and assigned to the video successfully",
                 "video_id": video.video_id
             }), 200
         except Exception as e:
-            print(f"Error: Audio processing failed: {e}")
             return jsonify({"error": f"Audio processing failed: {e}"}), 500
 
     except Exception as e:
         db.session.rollback()
         current_app.logger.error(f"An error occurred: {e}")
         return jsonify({"error": f"An unexpected error occurred: {e}"}), 500
-
 @app_bp.route('/speak_message', methods=["POST"])
 @jwt_required
 def speak_message():
@@ -304,7 +283,7 @@ def speak_message():
             print(f"Error: Video with URL '{cloudinary_url}' not found")
             return jsonify({"message": f"Video with URL '{cloudinary_url}' not found", "status": "video_not_found"}), 404
 
-        voice_id = video.audio_id
+        voice_id = video.voice_id
 
         if not voice_id:
             print("Error: Video does not have an assigned voice_id")
