@@ -207,15 +207,15 @@ def query_video():
 def create_clone():
     try:
         data = request.get_json()
-        video_url = data.get("video_url")
+        cloudinary_url = data.get("cloudinary_url")
 
-        if not video_url:
-            return jsonify({"error": "Missing video_url in request data"}), 400
+        if not cloudinary_url:
+            return jsonify({"error": "Missing cloudinary_url in request data"}), 400
 
-        video = Video.query.filter_by(video_url=video_url).first()
+        video = Video.query.filter_by(cloudinary_url=cloudinary_url).first()
 
         if not video:
-            return jsonify({"error": f"Video with id '{video_url}' not found"}), 404
+            return jsonify({"error": f"Video with id '{cloudinary_url}' not found"}), 404
 
         if video.audio_id is not None:
             return jsonify({
@@ -224,7 +224,7 @@ def create_clone():
                 "code": "video_voice_id_exists"
             }), 409
 
-        downloaded_video = download_video_from_cloudinary(video.video_url)
+        downloaded_video = download_video_from_cloudinary(video.cloudinary_url)
         if not downloaded_video:
             return jsonify({"error": "Failed to download video from Cloudinary"}), 500
 
@@ -265,16 +265,16 @@ def create_clone():
 def speak_message():
     try:
         data = request.get_json()
-        video_url = data.get("video_url")
+        cloudinary_url = data.get("cloudinary_url")
         message = data.get("message")
 
-        if not video_url or not message:
-            return jsonify({"message": "Missing video_url or message in request data", "status": "missing_params"}), 400
+        if not cloudinary_url or not message:
+            return jsonify({"message": "Missing cloudinary_url or message in request data", "status": "missing_params"}), 400
 
-        video = Video.query.filter_by(cloudinary_url=video_url).first()
+        video = Video.query.filter_by(cloudinary_url=cloudinary_url).first()
 
         if not video:
-            return jsonify({"message": f"Video with URL '{video_url}' not found", "status": "video_not_found"}), 404
+            return jsonify({"message": f"Video with URL '{cloudinary_url}' not found", "status": "video_not_found"}), 404
 
         voice_id = video.audio_id
 
