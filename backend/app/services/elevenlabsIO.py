@@ -26,7 +26,7 @@ def text_to_speech(voice_id, text, model_id = None, output_path = os.getcwd()):
     audio = client.text_to_speech.convert(
     voice_id=voice_id,
     output_format="mp3_44100_128",
-    text="The first move is what sets everything in motion.",
+    text=text,
     model_id="eleven_multilingual_v2",
 )
     dir= os.path.join(output_path, "generated_audio")
