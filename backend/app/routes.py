@@ -206,15 +206,15 @@ def query_video():
 def create_clone():
     try:
         data = request.get_json()
-        video_id = data.get("video_id")
+        video_url = data.get("video_url")
 
-        if not video_id:
-            return jsonify({"error": "Missing video_id in request data"}), 400
+        if not video_url:
+            return jsonify({"error": "Missing video_url in request data"}), 400
 
-        video = Video.query.filter_by(video_id=video_id).first()
+        video = Video.query.filter_by(video_url=video_url).first()
 
         if not video:
-            return jsonify({"error": f"Video with id '{video_id}' not found"}), 404
+            return jsonify({"error": f"Video with id '{video_url}' not found"}), 404
 
         if video.audio_id is not None:
             return jsonify({
