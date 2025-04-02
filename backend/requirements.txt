@@ -14,7 +14,7 @@ moviepy
 Flask-Bcrypt==1.0.1
 psycopg2==2.9.10
 Flask-SQLAlchemy==3.1.1
-py-jwt==2.10.1
+PyJWT==2.10.1
 moviepy==2.1.2
 webrtcvad-wheels==2.0.14
 pydub==0.25.1
