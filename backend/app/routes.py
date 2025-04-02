@@ -217,7 +217,7 @@ def create_clone():
         if not video:
             return jsonify({"error": f"Video with id '{cloudinary_url}' not found"}), 404
 
-        if video.audio_id is not None:
+        if video.voice_id is not None:
             return jsonify({
                 "message": "Video already has a voice_id. Cannot assign a new one.",
                 "status": "conflict",
@@ -240,12 +240,12 @@ def create_clone():
             audio_segments_dir = os.path.join(path_to_audio_processing, "segments")
             audio_files = utils.get_audio_segment_files_from_dir(audio_segments_dir)
             audio_files_with_duration = utils.get_sorted_audio_with_duration(audio_files)
-            audio_id = create_voice_clones([audio_files_with_duration[0][0]], video.title)
+            voice_id = create_voice_clones([audio_files_with_duration[0][0]], video.title)
 
-            if not audio_id:
+            if not voice_id:
                 return jsonify({"error": "Failed to create voice clone"}), 500
 
-            video.audio_id = audio_id
+            video.voice_id = voice_id
             db.session.commit()
 
             return jsonify({
@@ -276,7 +276,7 @@ def speak_message():
         if not video:
             return jsonify({"message": f"Video with URL '{cloudinary_url}' not found", "status": "video_not_found"}), 404
 
-        voice_id = video.audio_id
+        voice_id = video.voice_id
 
         if not voice_id:
             return jsonify({
