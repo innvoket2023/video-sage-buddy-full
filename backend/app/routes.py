@@ -1,12 +1,15 @@
 from flask import Blueprint, request, jsonify, current_app
 from app.models import User, Video
 from app.extensions import db
+from app.services.audio_segmentation import create_audio_segments
 from app.services.auth_service import decode_token
 from app.auth_routes import jwt_required
+from app.services.elevenlabsIO import create_voice_clones
 from app.services.video_processing import (
     download_video_from_cloudinary, transcribe_video, create_documents,
     get_vector_db, prepare_results, gemini_fallback
 )
+from app.services import utils
 import re
 import os
 from sqlalchemy.exc import IntegrityError
@@ -198,6 +201,66 @@ def query_video():
         current_app.logger.error(f"Query error: {str(e)}")
         return jsonify({"error": f"Processing failed: {str(e)}"}), 500
 
+@app_bp.route('/create_clone', methods=["POST"])
+@jwt_required
+def create_clone():
+    try:
+        data = request.get_json()
+        video_id = data.get("video_id")
+
+        if not video_id:
+            return jsonify({"error": "Missing video_id in request data"}), 400
+
+        video = Video.query.filter_by(video_id=video_id).first()
+
+        if not video:
+            return jsonify({"error": f"Video with id '{video_id}' not found"}), 404
+
+        if video.audio_id is not None:
+            return jsonify({
+                "message": "Video already has a voice_id. Cannot assign a new one.",
+                "status": "conflict",
+                "code": "video_voice_id_exists"
+            }), 409
+
+        downloaded_video = download_video_from_cloudinary(video.video_url)
+        if not downloaded_video:
+            return jsonify({"error": "Failed to download video from Cloudinary"}), 500
+
+        path_to_audio_processing = os.path.join(os.getcwd(), str(video.video_id))  # Convert to string
+
+        try:
+            os.makedirs(path_to_audio_processing, exist_ok=True)
+        except OSError as e:
+            return jsonify({"error": f"Failed to create directories: {e}"}), 500
+
+        try:
+            create_audio_segments(downloaded_video, path_to_audio_processing)
+            audio_segments_dir = os.path.join(path_to_audio_processing, "segments")
+            audio_files = utils.get_audio_segment_files_from_dir(audio_segments_dir)
+            audio_files_with_duration = utils.get_sorted_audio_with_duration(audio_files)
+            audio_id = create_voice_clones([audio_files_with_duration[0][0]], video.title)
+
+            if not audio_id:
+                return jsonify({"error": "Failed to create voice clone"}), 500
+
+            video.audio_id = audio_id
+            db.session.commit()
+
+            return jsonify({
+                "message": "Voice ID created and assigned to the video successfully",
+                "audio_id": audio_id
+            }), 200
+        except Exception as e:
+            return jsonify({"error": f"Audio processing failed: {e}"}), 500
+
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"An error occurred: {e}")
+        return jsonify({"error": f"An unexpected error occurred: {e}"}), 500
+
+@app_bp.route('/')
+    
 @app_bp.route('/api/mock', methods=["GET"])
 def mock():
     # Get token from Authorization header

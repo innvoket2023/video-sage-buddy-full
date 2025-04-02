@@ -47,6 +47,7 @@ class Video(db.Model):
     duration = db.Column(db.Numeric, nullable=True)
     upload_date = db.Column(db.DateTime(timezone=True), server_default=db.func.now())
     status = db.Column(db.String(50), default='active')
+    voice_id = db.Column(db.String(255), nullable=True)
     
     # Add metadata fields similar to User
     updated_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now(), onupdate=db.func.now())
