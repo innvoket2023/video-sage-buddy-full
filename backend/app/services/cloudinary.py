@@ -24,3 +24,7 @@ def download_video_from_cloudinary(video_url):
         os.unlink(temp_file.name)
         print(f"Error downloading video: {e}")
         return None
+
+def remove_video_from_cloudinary(video_public_id):
+    result = cloudinary.uploader.destroy(video_public_id, resource_type="video")
+    return result

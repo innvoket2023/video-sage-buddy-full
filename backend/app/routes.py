@@ -5,17 +5,16 @@ from app.services.audio_segmentation import create_audio_segments
 from app.services.auth_service import decode_token
 from app.auth_routes import jwt_required
 from app.services.elevenlabsIO import create_voice_clones, text_to_speech
-from app.services.video_processing import (
-    download_video_from_cloudinary, transcribe_video, create_documents,
-    get_vector_db, prepare_results, gemini_fallback
-)
+from app.services.video_processing import (transcribe_video, create_documents ,get_vector_db, prepare_results, gemini_fallback)
+from app.services.cloudinary import download_video_from_cloudinary, remove_video_from_cloudinary 
 from app.services import utils
 import re
 import os
 from sqlalchemy.exc import IntegrityError
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
-from flask import send_file
+from flask import send_filefrom
+from cloudinary.exceptions import Error as CloudinaryError
 import datetime
 
 # Create blueprint
@@ -349,7 +348,37 @@ def speak_message():
         db.session.rollback()
         current_app.logger.error(f"An unexpected error occurred: {e}")
         return jsonify({"message": "An unexpected error occurred", "status": "unexpected_error"}), 500
-    
+
+@app_bp.route('/delete/video', methods=["DELETE"])
+@jwt_required
+def remove_video():
+    try:
+        data = request.get_json()
+        user_id = request.user_id
+        video_url = data.get('video_url')
+
+        if not video_url:
+            return jsonify({"error": "Video URL is required"}), 400
+
+        video = Video.query.filter_by(user_id=user_id, cloudinary_url=video_url).first()
+
+        if not video:
+            return jsonify({"error": "Video not found"}), 404
+
+        try:
+            response = remove_video_from_cloudinary(str(video.video_id))
+        except CloudinaryError as ce:
+            return jsonify({"error": f"Cloudinary error: {str(ce)}"}), 500
+
+        db.session.delete(video)
+        db.session.commit()
+
+        return jsonify({"message": "Video deleted successfully"}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
+
 @app_bp.route('/api/mock', methods=["GET"])
 def mock():
     # Get token from Authorization header

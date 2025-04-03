@@ -14,29 +14,6 @@ embedding_model = OpenAIEmbeddings(model="text-embedding-ada-002", api_key=os.ge
 # Dictionary to store vector databases for each video
 video_vector_dbs = {}
 
-def download_video_from_cloudinary(video_url):
-    """
-    Downloads a video from Cloudinary URL to a temporary file
-    """
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
-    
-    try:
-        # Download the file
-        response = requests.get(video_url, stream=True)
-        response.raise_for_status()
-        
-        # Write the file to the temporary location
-        for chunk in response.iter_content(chunk_size=8192):
-            temp_file.write(chunk)
-        
-        temp_file.close()
-        return temp_file.name
-    except Exception as e:
-        temp_file.close()
-        os.unlink(temp_file.name)
-        print(f"Error downloading video: {e}")
-        return None
-
 def transcribe_video(video_path):
     """
     Transcribes a video from a file path
@@ -96,12 +73,13 @@ def get_vector_db(user_id, video_name, safe_video_name):
         if not os.path.exists(f"faiss_indexes/{user_id}/all"):
             print("There are no videos")
             return None
-        return FAISS.load_local(f"faiss_indexes/{user_id}/all", embedding_model, allow_dangerous_deserialization=True)
+        all_vector_path = f"faiss_indexes/{user_id}/all"
+        return (FAISS.load_local(f"faiss_indexes/{user_id}/all", embedding_model, allow_dangerous_deserialization=True), all_vector_path)
     
     individual_vector_db_path = f"faiss_indexes/{user_id}/individual/{safe_video_name}" 
 
     if os.path.exists(individual_vector_db_path):
-        return FAISS.load_local(individual_vector_db_path, embedding_model, allow_dangerous_deserialization=True)
+        return (FAISS.load_local(individual_vector_db_path, embedding_model, allow_dangerous_deserialization=True), individual_vector_db_path)
     else:
         raise ValueError(f"The video: {video_name} doesn't exist at {individual_vector_db_path}")
 
@@ -185,3 +163,10 @@ def create_vector_database(user_id, video_name, docs):
     except Exception as e:
         print(f"Error creating vector database: {e}")
         return None
+
+def delete_video_from_vector_database(user_id, video_name, safe_video_name):
+    path = get_vector_db(user_id, video_name, safe_video_name)[1]
+    if video_name == "all":
+
+    else:
+        os.remove(path)
