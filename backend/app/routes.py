@@ -5,7 +5,7 @@ from app.services.audio_segmentation import create_audio_segments
 from app.services.auth_service import decode_token
 from app.auth_routes import jwt_required
 from app.services.elevenlabsIO import create_voice_clones, text_to_speech
-from app.services.video_processing import (transcribe_video, create_documents ,get_vector_db, prepare_results, gemini_fallback)
+from app.services.video_processing import (delete_video_from_vector_database, transcribe_video, create_documents ,get_vector_db, prepare_results, gemini_fallback, create_vector_database)
 from app.services.cloudinary import download_video_from_cloudinary, remove_video_from_cloudinary 
 from app.services import utils
 import re
@@ -58,29 +58,7 @@ def upload_and_store():
 
     # Create and store vector DB
     docs = create_documents(transcript, video_name)
-    vector_db = FAISS.from_documents(docs, embedding_model)
-    
-    # Handle universal vector DB
-    safe_video_name = re.sub(r'[^a-zA-Z0-9_-]', '_', video_name)
-    
-    # Create directories if they don't exist
-    os.makedirs(f"faiss_indexes/{user_id}/individual", exist_ok=True)
-    os.makedirs(f"faiss_indexes/{user_id}/all", exist_ok=True)
-    
-    # Save individual index
-    vector_db.save_local(f"faiss_indexes/{user_id}/individual/{safe_video_name}")
-    
-    # Update combined index
-    try:
-        if os.path.exists(f"faiss_indexes/{user_id}/all"):
-            combined_db = FAISS.load_local(f"faiss_indexes/{user_id}/all", embedding_model, allow_dangerous_deserialization=True)
-            combined_db.merge_from(vector_db)
-        else:
-            combined_db = FAISS.from_documents(docs, embedding_model)
-
-        combined_db.save_local(f"faiss_indexes/{user_id}/all")
-    except Exception as e:
-        print(f"Error updating combined index: {e}")
+    safe_video_name = create_vector_database(user_id, video_name, docs)
 
     # Create Video record in the database
     new_video = Video(
@@ -369,6 +347,11 @@ def remove_video():
             response = remove_video_from_cloudinary(str(video.video_id))
         except CloudinaryError as ce:
             return jsonify({"error": f"Cloudinary error: {str(ce)}"}), 500
+
+        try:
+            delete_video_from_vector_database(user_id, video_name=video.title, safe_video_name=video.safe_video_name)
+        except Exception as e:
+            return jsonify({"error": f"VectorDB deletion error: {str(e)}"}), 500
 
         db.session.delete(video)
         db.session.commit()

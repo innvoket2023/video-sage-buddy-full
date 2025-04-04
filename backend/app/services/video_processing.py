@@ -1,5 +1,6 @@
 import os
 import re
+import shutil
 import tempfile
 import requests
 import google.generativeai as genai
@@ -7,6 +8,9 @@ from collections import defaultdict
 from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Initialize embedding model
 embedding_model = OpenAIEmbeddings(model="text-embedding-ada-002", api_key=os.getenv("OPENAI_API_KEY"))
@@ -140,8 +144,9 @@ def create_vector_database(user_id, video_name, docs):
         # Create safe name for filesystem
         safe_video_name = re.sub(r'[^a-zA-Z0-9_-]', '_', video_name)
         
+        safe_video_name_as_ids = [f"{safe_video_name}_{i}" for i in range(len(docs))]
         # Create vector database from documents
-        vector_db = FAISS.from_documents(docs, embedding_model)
+        vector_db = FAISS.from_documents(docs, embedding_model, ids = safe_video_name_as_ids)
         
         # Save individual index
         vector_db.save_local(f"faiss_indexes/{user_id}/individual/{safe_video_name}")
@@ -164,9 +169,77 @@ def create_vector_database(user_id, video_name, docs):
         print(f"Error creating vector database: {e}")
         return None
 
-def delete_video_from_vector_database(user_id, video_name, safe_video_name):
-    path = get_vector_db(user_id, video_name, safe_video_name)[1]
-    if video_name == "all":
-
+def remove_video_documents(vector_db, safe_video_name):
+    """
+    Remove all documents from a FAISS vector database that have IDs containing a specific video name.
+    
+    Args:
+        vector_db: The FAISS vector database
+        safe_video_name: The safe video name to filter documents by
+    
+    Returns:
+        tuple: (updated_vector_db, num_deleted) - the updated database and count of deleted docs
+    """
+    
+    # Find all docstore IDs that start with or match the video name pattern
+    ids_to_delete = []
+    
+    for doc_id in vector_db.docstore._dict.keys():
+        # Check if ID starts with the video name pattern followed by underscore
+        if isinstance(doc_id, str) and doc_id.startswith(f"{safe_video_name}_"):
+            ids_to_delete.append(doc_id)
+    
+    # Delete all identified documents at once
+    if ids_to_delete:
+        print(f"Deleting {len(ids_to_delete)} documents for video: {safe_video_name}")
+        vector_db.delete(ids=ids_to_delete)
+        return vector_db, len(ids_to_delete)
     else:
-        os.remove(path)
+        print(f"No documents found for video: {safe_video_name}")
+        return vector_db, 0
+
+
+def delete_video_from_vector_database(user_id, video_name, safe_video_name):
+    """
+    Deletes vector databases for a specific video name or all videos for a user.
+
+    Args:
+        user_id: The user ID associated with the vector database
+        video_name: The specific video name or "all" for all videos
+        safe_video_name: The sanitized video name used for ID matching
+
+    Returns:
+        int: Number of documents removed from the combined vector database
+    """
+    try:
+        individual_deleted = False
+        
+        if video_name != "all":
+            # Handle individual vector database
+            try:
+                individual_path = f"faiss_indexes/{user_id}/individual/{safe_video_name}"
+                if os.path.exists(individual_path):
+                    shutil.rmtree(individual_path)  # Use shutil.rmtree instead of os.remove for directories
+                    individual_deleted = True
+                    print(f"Deleted individual vector database for {safe_video_name}")
+                else:
+                    print(f"Warning: Individual vector database not found at {individual_path}")
+            except Exception as e:
+                print(f"Error deleting individual database: {e}")
+        
+        # Switch to "all" vector database for deletion
+        all_vector_db, _ = get_vector_db(user_id, "all", safe_video_name)
+        
+        # Update the combined vector database
+        updated_vector_db, num_deleted = remove_video_documents(all_vector_db, safe_video_name)
+        
+        # Only save if documents were deleted
+        if num_deleted > 0 or individual_deleted:
+            updated_vector_db.save_local(f"faiss_indexes/{user_id}/all")
+            print(f"Updated combined vector database, removed {num_deleted} documents")
+            
+        return num_deleted
+
+    except Exception as e:
+        print(f"Error during vector database deletion: {e}")
+        return 0
