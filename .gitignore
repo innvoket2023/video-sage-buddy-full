@@ -41,9 +41,11 @@ secrets.json # Only if it contains secrets
 #Agentic DB
 db/
 
+
 #Project specific
 faiss_indexes/
 flask_session/
+llm_usage/
 segments/
 *.wav
 *.mp3

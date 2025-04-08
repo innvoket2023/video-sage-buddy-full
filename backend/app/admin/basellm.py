@@ -1,3 +1,4 @@
+from app.admin.llmusage import LLMUsage
 from typing import Dict, List, Optional, Tuple, ClassVar, Any
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
@@ -5,7 +6,6 @@ import os
 import json
 import requests
 from enum import Enum
-from llmusage import LLMUsage
 
 # Core data structures
 @dataclass
@@ -98,14 +98,16 @@ class BaseLLM(ABC):
     @abstractmethod
     def generate(self, prompt: str,
                  format: ResponseFormat = ResponseFormat.TEXT,
-                 stream: bool = False) -> str:
+                 stream: bool = False,
+                 user_id: Optional[str] = None) -> str:
         """Generate text from prompt"""
         pass
     
     @abstractmethod
     def chat(self, messages: List[Dict[str, str]],
              format: ResponseFormat = ResponseFormat.TEXT,
-             stream: bool = False) -> str:
+             stream: bool = False,
+             user_id: Optional[str] = None) -> str:
         """Chat with the model using messages"""
         pass
         

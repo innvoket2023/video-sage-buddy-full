@@ -1,11 +1,20 @@
+from app.admin.basellm import ModelCapabilities
+from app.admin.basellm import BaseLLM, ResponseFormat
 import os
 import json
 import uuid
 import time
 import requests
 from typing import Dict, List, Optional, Tuple, Any
+import logging
+import sys
 
-from basellm import BaseLLM, ResponseFormat, ModelCapabilities
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+console_handler = logging.StreamHandler()
+formatter = logging.Formatter('%(filename)s:%(lineno)d - %(funcName)s() - %(asctime)s%(message)s')
+console_handler.setFormatter(formatter)
+logger.addHandler(console_handler)
 
 class Gemini(BaseLLM):
     """Google's Gemini LLM implementation"""
@@ -20,7 +29,8 @@ class Gemini(BaseLLM):
     
     def generate(self, prompt: str, 
                  format: ResponseFormat = ResponseFormat.TEXT,
-                 stream: bool = False) -> str:
+                 stream: bool = False,
+                 user_id: Optional[str] = None) -> str:
         """Generate text from prompt using Gemini"""
         # Track request with unique identifier
         request_id = str(uuid.uuid4())
@@ -68,6 +78,7 @@ class Gemini(BaseLLM):
                 cost = self._calculate_cost(prompt_tokens, completion_tokens)
                 
                 self.usage_tracker.record_request(
+                    user_id = user_id,
                     request_id=request_id,
                     model=self._model_name,
                     provider=self.provider_name,
@@ -84,6 +95,7 @@ class Gemini(BaseLLM):
             # Record error if tracker is available
             if self.usage_tracker:
                 self.usage_tracker.record_request(
+                    user_id = user_id,
                     request_id=request_id,
                     model=self._model_name,
                     provider=self.provider_name,
@@ -97,7 +109,8 @@ class Gemini(BaseLLM):
     
     def chat(self, messages: List[Dict[str, str]],
              format: ResponseFormat = ResponseFormat.TEXT,
-             stream: bool = False) -> str:
+             stream: bool = False,
+             user_id: Optional[str] = None) -> str:
         """Chat with Gemini using messages"""
         # Track request with unique identifier
         request_id = str(uuid.uuid4())
@@ -177,6 +190,7 @@ class Gemini(BaseLLM):
             # Record error if tracker is available
             if self.usage_tracker:
                 self.usage_tracker.record_request(
+                    user_id = user_id,
                     request_id=request_id,
                     model=self._model_name,
                     provider=self.provider_name,
@@ -200,20 +214,27 @@ class Gemini(BaseLLM):
     def _extract_prompt_tokens(self, result: Dict[str, Any]) -> int:
         """Extract prompt tokens from API response"""
         try:
-            return result.get("usageMetadata", {}).get("promptTokenCount", 0)
+            token = result.get("usageMetadata", {}).get("promptTokenCount", 0)
+            print("hey")
+            logger.debug(f"official prompt token, provided from api response is:::: {token}")
+            return token
         except (KeyError, AttributeError):
             # Estimate based on text length if not provided by API
             # Rough estimate: 1 token per 4 characters
             prompt_text = result.get("contents", [{}])[0].get("parts", [{}])[0].get("text", "")
+            logger.debug(f"we are hecking our way to the tokens lol still this is what u gonna get:::: {len(prompt_text)} // 4")
             return len(prompt_text) // 4 
     
     def _extract_completion_tokens(self, result: Dict[str, Any]) -> int:
         """Extract completion tokens from API response"""
         try:
-            return result.get("usageMetadata", {}).get("candidatesTokenCount", 0)
+            token = result.get("usageMetadata", {}).get("candidatesTokenCount", 0)
+            logger.debug(f"this is completetion tokens:::: {token}")
+            return token
         except (KeyError, AttributeError):
             # Estimate based on response length if not provided by API
             response_text = self._extract_response_text(result)
+            logger.debug(f"this is completetion tokens heckkkyyy:::: {len(response_text) // 4}")
             return len(response_text) // 4
     
     def _calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
@@ -227,6 +248,9 @@ class Gemini(BaseLLM):
             "gemini-1.5-flash-001": {"prompt": 0.000007, "completion": 0.000021},
             "gemini-1.0-pro": {"prompt": 0.000010, "completion": 0.000030}
         }
+
+        if not prices.get(self._model_name, None):
+            logger.debug("price doesn't exist for that particular thing")
         
         model_prices = prices.get(
             self._model_name, 
@@ -316,3 +340,6 @@ class Gemini(BaseLLM):
         }
         
         return provider, model_data
+
+
+# logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

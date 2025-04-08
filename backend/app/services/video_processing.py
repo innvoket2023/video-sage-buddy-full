@@ -1,3 +1,5 @@
+from app.admin.gemini import Gemini
+from app.admin.llmusage import LLMUsage
 import os
 import re
 import shutil
@@ -9,6 +11,7 @@ from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from dotenv import load_dotenv
+from flask import current_app
 
 load_dotenv()
 
@@ -17,6 +20,17 @@ embedding_model = OpenAIEmbeddings(model="text-embedding-ada-002", api_key=os.ge
 
 # Dictionary to store vector databases for each video
 video_vector_dbs = {}
+# Get the usage tracker from app context
+def get_usage_tracker():
+    # If usage_tracker doesn't exist yet in app context, initialize it
+    if not hasattr(current_app, 'usage_tracker'):
+        # Initialize with app configuration
+        current_app.usage_tracker = LLMUsage(
+            token_quota=current_app.config.get('LLM_TOKEN_QUOTA'),
+            cost_budget=current_app.config.get('LLM_COST_BUDGET'),
+            storage_path=current_app.config.get('LLM_USAGE_STORAGE_PATH')
+        )
+    return current_app.usage_tracker
 
 def transcribe_video(video_path):
     """
@@ -78,12 +92,12 @@ def get_vector_db(user_id, video_name, safe_video_name):
             print("There are no videos")
             return None
         all_vector_path = f"faiss_indexes/{user_id}/all"
-        return (FAISS.load_local(f"faiss_indexes/{user_id}/all", embedding_model, allow_dangerous_deserialization=True), all_vector_path)
+        return FAISS.load_local(f"faiss_indexes/{user_id}/all", embedding_model, allow_dangerous_deserialization=True), all_vector_path
     
     individual_vector_db_path = f"faiss_indexes/{user_id}/individual/{safe_video_name}" 
 
     if os.path.exists(individual_vector_db_path):
-        return (FAISS.load_local(individual_vector_db_path, embedding_model, allow_dangerous_deserialization=True), individual_vector_db_path)
+        return FAISS.load_local(individual_vector_db_path, embedding_model, allow_dangerous_deserialization=True), individual_vector_db_path
     else:
         raise ValueError(f"The video: {video_name} doesn't exist at {individual_vector_db_path}")
 
@@ -118,12 +132,28 @@ def prepare_results(docs, group_by_source=False, get_majority_source=False):
         return filtered_results, majority_source
     return filtered_results
 
-def gemini_fallback(query, transcript):
+def gemini_fallback(user_id, query, transcript):
     """Generate fallback response using Gemini."""
-    model = genai.GenerativeModel('gemini-1.5-pro')
+    print(f"[DEBUG] gemini_fallback called with user_id: {user_id}")
+    print(f"[DEBUG] query: {query}")
+    print(f"[DEBUG] transcript length: {len(transcript) if transcript else 0}")
+
+
+    usage_tracker = get_usage_tracker()
+    print(f"[DEBUG] LLMUsage initialized with token_quota: {usage_tracker.token_quota}, cost_budget: {usage_tracker.cost_budget}")
+    if usage_tracker:
+        print(f"[DEBUG] Got the access to the local usage_tracker")
+    gemini_client: Gemini = Gemini(
+        model_name="gemini-2.0-flash",
+        api_key=os.environ.get("GEMINI_API_KEY"),
+        usage_tracker=usage_tracker
+    )
+    print(f"[DEBUG] Gemini client initialized with model_name: {gemini_client._model_name}")
+
     context = transcript
     
     if not context:
+        print("[DEBUG] No context found, returning default response")
         return {
             "content": "No relevant information found in videos",
             "timestamp": "",
@@ -131,9 +161,13 @@ def gemini_fallback(query, transcript):
         }
 
     prompt = f"Based on this context: {context[:10000]}\\n\\nAnswer concisely: {query}\\n\\nImportant guidelines:\\n- Complete your response in a friendly, helpful tone\\n- If the question relates to video content, include up to 3 most important timestamps in strictly [HH:MM:SS] format at the end\\n- Do not repeat any timestamp\\n- Only provide timestamps for video-related questions\\n- If the question is completely unrelated to the video, do not include any timestamps\\n- Place timestamps at the very end of your response without any additional commentary\\n\\nExample good response with timestamps:\\n[Your concise answer to the query]\\n[HH:MM:SS]\\n[HH:MM:SS]\\n[HH:MM:SS]\\n\\nExample good response without timestamps:\\n[Your concise answer to the unrelated query]"
+    print(f"[DEBUG] Prompt created, length: {len(prompt)}")
+
+    print("[DEBUG] Calling Gemini generate method")
+    response = gemini_client.generate(user_id=user_id, prompt=prompt)
+    print(f"[DEBUG] Gemini response received, length: {len(response) if response else 0}")
     
-    response = model.generate_content(prompt)
-    return response.text
+    return response
 
 def create_vector_database(user_id, video_name, docs):
     """Create vector databases for a video"""

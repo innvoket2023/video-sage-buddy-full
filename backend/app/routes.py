@@ -123,59 +123,82 @@ def get_preview():
 @jwt_required
 def query_video():
     user_id = request.user_id 
+    print(f"[DEBUG] user_id: {user_id}")
     try:
         data = request.get_json()
         query = data['query']
         video_name = data['video_name']
+        print(f"[DEBUG] query: {query}, video_name: {video_name}")
         
         # Get safe_video_name if not querying all videos
         if video_name != "all":
             video = Video.query.filter_by(user_id=user_id, title=video_name).first()
             if not video:
+                print(f"[DEBUG] Video '{video_name}' not found")
                 return jsonify({"error": f"Video '{video_name}' not found"}), 404
             safe_video_name = video.safe_name_for_vectordb
+            print(f"[DEBUG] safe_video_name: {safe_video_name}")
         else:
             safe_video_name = None
+            print(f"[DEBUG] video_name is 'all', safe_video_name: {safe_video_name}")
 
         # Validate inputs
         if not query or not video_name:
+            print(f"[DEBUG] Missing query or video_name")
             return jsonify({"error": "Missing query or video_name"}), 400
 
         # Get appropriate vector DB
-        vector_db = get_vector_db(user_id, video_name, safe_video_name)
+        print(f"[DEBUG] Calling get_vector_db with user_id: {user_id}, video_name: {video_name}, safe_video_name: {safe_video_name}")
+        vector_db, path = get_vector_db(user_id, video_name, safe_video_name)
+        print(f"[DEBUG] vector_db: {vector_db}, path: {path}")
         if not vector_db:
+            print(f"[DEBUG] Video data not available")
             return jsonify({"error": "Video data not available"}), 404
 
         # Perform similarity search
         search_k = 1 if video_name == "all" else 3
+        print(f"[DEBUG] search_k: {search_k}")
         docs = vector_db.similarity_search(query, k=search_k)
+        print(f"[DEBUG] docs: {docs}")
 
         # Prepare results in uniform format
+        print(f"[DEBUG] Calling prepare_results with group_by_source: {video_name == 'all'}")
         filtered_results, majority_source = prepare_results(
             docs=docs,
             group_by_source=(video_name == "all"),
             get_majority_source=True
         )
+        print(f"[DEBUG] filtered_results: {filtered_results}, majority_source: {majority_source}")
 
         # Determine final video source for Gemini
         final_source = majority_source if video_name == "all" else video_name
+        print(f"[DEBUG] final_source: {final_source}")
 
         # Get transcript for the selected video
-        transcript = Video.query.filter_by(user_id=user_id, title=final_source).first().transcript
+        transcript_video = Video.query.filter_by(user_id=user_id, title=final_source).first()
+        print(f"[DEBUG] transcript_video: {transcript_video}")
+        transcript = transcript_video.transcript
+        print(f"[DEBUG] transcript length: {len(transcript) if transcript else 0}")
         
         # Generate response using the determined source
-        content = gemini_fallback(query, transcript)
+        print(f"[DEBUG] Calling gemini_fallback")
+        content = gemini_fallback(user_id, query, transcript)
+        print(f"[DEBUG] content: {content[:100]}...")  # Print first 100 chars of content
+        
         results = {
             "content": content,
             "timestamp": filtered_results[0]["timestamp"] if filtered_results else "",
             "source": final_source
         }
+        print(f"[DEBUG] results: {results}")
 
         return jsonify({"results": [results]})
 
     except KeyError as e:
+        print(f"[DEBUG] KeyError: {str(e)}")
         return jsonify({"error": f"Missing required field: {str(e)}"}), 400
     except Exception as e:
+        print(f"[DEBUG] Exception: {str(e)}")
         current_app.logger.error(f"Query error: {str(e)}")
         return jsonify({"error": f"Processing failed: {str(e)}"}), 500
 

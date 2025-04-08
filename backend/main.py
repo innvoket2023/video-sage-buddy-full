@@ -1,5 +1,7 @@
 from flask import Flask
+from logging.config import dictConfig
 import os
+from app.admin.llmusage import LLMUsage
 
 def create_app(config_name="development"):
     # Create the Flask app
@@ -25,15 +27,48 @@ def create_app(config_name="development"):
     
     from app.routes import app_bp
     from app.auth_routes import auth_bp  # Import the auth blueprint
+    from app.admin.admin_api import admin
     
     app.register_blueprint(app_bp)
     app.register_blueprint(auth_bp)  # Register auth blueprint
+    app.register_blueprint(admin)
     
     # Create database tables
     with app.app_context():
         # Create directories for vector databases
         os.makedirs("faiss_indexes", exist_ok=True)
         db.create_all()
+        # Create directories for LLM usage logs
+        os.makedirs(app.config.get('LLM_USAGE_STORAGE_PATH'), exist_ok=True)
+
+    # Below is the log config
+    dictConfig({
+    'version': 1,
+    'formatters': {
+        'default': {
+            'format': '[%(asctime)s] %(levelname)s in %(module)s: %(message)s',
+        }
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'stream': 'ext://sys.stdout',
+            'formatter': 'default'
+        }
+    },
+    'root': {
+        'level': 'DEBUG',
+        'handlers': ['console']
+    }
+})
+
+    #usage_tracking using LLMUsage isntance
+    from app.admin.llmusage import LLMUsage
+    app.usage_tracker = LLMUsage(
+        token_quota=app.config.get('LLM_TOKEN_QUOTA'),
+        cost_budget=app.config.get('LLM_COST_BUDGET'),
+        storage_path=app.config.get('LLM_USAGE_STORAGE_PATH')
+    )
     
     return app
 
