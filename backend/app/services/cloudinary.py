@@ -3,6 +3,29 @@ import tempfile
 import os
 import cloudinary
 import cloudinary.uploader
+import cloudinary.api
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Configure Cloudinary with your credentials
+cloudinary.config(
+    cloud_name = os.getenv("CLOUDINARY_CLOUD_NAME"),
+    api_key = os.getenv("CLOUDINARY_API_KEY"),
+    api_secret = os.getenv("CLOUDINARY_API_SECRET"),
+    secure = True
+)
+
+def cloudinary_usage():
+    try:
+        # Call the usage API method
+        usage_data = cloudinary.api.usage()
+
+        # Print the usage data
+        return usage_data
+
+    except Exception as e:
+        print(f"Error fetching usage data: {e}")
 
 def download_video_from_cloudinary(video_url):
     """Downloads a video from Cloudinary URL to a temporary file"""
@@ -28,3 +51,5 @@ def download_video_from_cloudinary(video_url):
 def remove_video_from_cloudinary(video_public_id):
     result = cloudinary.uploader.destroy(video_public_id, resource_type="video")
     return result
+
+

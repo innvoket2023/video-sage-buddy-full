@@ -9,6 +9,14 @@ load_dotenv()
 api = os.getenv("ELEVENLABS_API_KEY")
 client = ElevenLabs(api_key=api)
 
+def elevenlabs_usage():
+    try:
+    # Get subscription details
+        subscription_info = client.user.get_subscription()
+        return subscription_info
+    except Exception as e:
+        print(f"An error occurred while fetching subscription info: {e}")
+
 def create_voice_clones(file_paths, title, description = None):
     #Make sure to pass the file_paths as a list
     with contextlib.ExitStack() as stack:
