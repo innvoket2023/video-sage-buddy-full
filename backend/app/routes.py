@@ -13,7 +13,7 @@ import os
 from sqlalchemy.exc import IntegrityError
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
-from flask import send_filefrom
+from flask import send_file
 from cloudinary.exceptions import Error as CloudinaryError
 import datetime
 
@@ -360,6 +360,7 @@ def remove_video():
 
     except Exception as e:
         db.session.rollback()
+        print("possible error : ",e)
         return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
 
 @app_bp.route('/api/mock', methods=["GET"])
