@@ -3,7 +3,7 @@ from app.models import User, Video
 from app.extensions import db
 from app.services.audio_segmentation import create_audio_segments
 from app.services.auth_service import decode_token
-from app.auth_routes import jwt_required
+from app.middleware import jwt_required
 from app.services.elevenlabsIO import create_voice_clones, text_to_speech
 from app.services.video_processing import (delete_video_from_vector_database, transcribe_video, create_documents ,get_vector_db, prepare_results, gemini_fallback, create_vector_database)
 from app.services.cloudinary import download_video_from_cloudinary, remove_video_from_cloudinary 

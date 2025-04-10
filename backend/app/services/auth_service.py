@@ -1,5 +1,6 @@
 import jwt
-import datetime
+from datetime import datetime, timedelta
+import pytz
 import os
 import secrets
 from app.extensions import db, bcrypt
@@ -13,8 +14,8 @@ from app.extensions import JWT_SECRET_KEY, JWT_EXPIRATION
 def generate_token(user_id):
     """Generate a JWT token for the user"""
     payload = {
-        'exp': datetime.datetime.utcnow() + datetime.timedelta(seconds=JWT_EXPIRATION),
-        'iat': datetime.datetime.utcnow(),
+        'exp': datetime.utcnow() + timedelta(seconds=JWT_EXPIRATION),
+        'iat': datetime.utcnow(),
         'sub': str(user_id)
     }
     return jwt.encode(payload, JWT_SECRET_KEY, algorithm='HS256')
@@ -71,12 +72,20 @@ def activate_user(user_id):
     """Activate a user account"""
     user = get_user_by_id(user_id)
     if user:
-        user.is_active = True
+        user.is_activated = True
         db.session.commit()
         return True
     return False
 
 def update_user_login_timestamp(user):
     """Update the last login timestamp for a user"""
-    user.last_login = datetime.datetime.now(datetime.timezone.utc)
+    user.last_login = datetime.now(pytz.utc)
     db.session.commit()
+
+def is_suspended(suspension_till):
+    if suspension_till is None:
+        return False
+    current_time = datetime.now(pytz.utc)
+    if current_time >= suspension_till:
+        return False
+    return True

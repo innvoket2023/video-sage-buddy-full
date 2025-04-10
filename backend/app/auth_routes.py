@@ -2,40 +2,16 @@ from flask import Blueprint, request, jsonify
 from app.services.auth_service import (
     generate_token, decode_token, verify_password, 
     create_user, get_user_by_id, get_user_by_identifier, 
-    activate_user, update_user_login_timestamp
+    activate_user, update_user_login_timestamp, is_suspended
 )
 from app.extensions import db
+from app.middleware import jwt_required
 from functools import wraps
 import re
 from sqlalchemy.exc import IntegrityError
 
 # Create the blueprint
 auth_bp = Blueprint('auth', __name__, url_prefix='/api')
-
-# JWT auth decorator
-def jwt_required(function):
-    @wraps(function)
-    def decorated_function(*args, **kwargs):
-        # Get token from header
-        auth_header = request.headers.get('Authorization')
-        if not auth_header:
-            return jsonify({"error": "Missing Authorization header"}), 401
-            
-        # Format: "Bearer <token>"
-        try:
-            token = auth_header.split(' ')[1]
-        except IndexError:
-            return jsonify({"error": "Invalid Authorization header format"}), 401
-            
-        # Decode and validate token
-        user_id = decode_token(token)
-        if not user_id:
-            return jsonify({"error": "Invalid or expired token"}), 401
-            
-        # Add user_id to request context
-        request.user_id = user_id
-        return function(*args, **kwargs)
-    return decorated_function
 
 @auth_bp.route('/signup', methods=['POST'])
 def signup():
@@ -97,6 +73,9 @@ def login():
     # Find the user
     try:
         user = get_user_by_identifier(identifier)
+
+        if is_suspended(user.suspended_till):
+            return jsonify({'error': "An unexpected issue occurred. Please contact our support team for assistance."})
         
         if not user:
             return jsonify({'error': 'Invalid credentials'}), 401
@@ -106,7 +85,7 @@ def login():
             return jsonify({'error': 'Invalid credentials'}), 401
         
         # Check if account is active
-        if not user.is_active:
+        if not user.is_activated:
             return jsonify({'error': 'Account not activated. Please check your email.'}), 403
         
         # Update last_login timestamp
@@ -138,7 +117,7 @@ def activate_account(user_id):
     if not user:
         return jsonify({'error': 'Invalid activation link'}), 404
     
-    if user.is_active:
+    if user.is_activated:
         return jsonify({'message': 'Account already activated'}), 200
     
     if activate_user(user_id):
@@ -201,3 +180,16 @@ def update_user():
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 500
+
+@auth_bp.route('/assign/admin/<uuid:user_id>', methods=['PUT'])
+def assign_admin_status(user_id):
+    user = get_user_by_id(user_id)
+    print(user)
+    print(user.is_admin)
+    if user.is_admin:
+        return jsonify({"message": "This user is already an Admin"}), 409
+    else:
+        user.is_admin = True
+        db.session.add(user)
+        db.session.commit()
+        return jsonify({"message": "Assigned admin status to this user"}), 200

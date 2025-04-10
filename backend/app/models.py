@@ -1,6 +1,7 @@
+from time import timezone
 from app.extensions import db
 import uuid
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, INET
 import datetime
 
 class User(db.Model):
@@ -10,10 +11,14 @@ class User(db.Model):
     username = db.Column(db.String(100), unique=True, nullable=False)
     email = db.Column(db.String(255), unique=True, nullable=False)
     password = db.Column(db.String(255), nullable=False)
+    ip = db.Column(INET(), nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now())
     updated_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now(), onupdate=db.func.now())
     last_login = db.Column(db.DateTime(timezone=True), nullable=True, onupdate=db.func.now())
-    is_active = db.Column(db.Boolean, default=False)
+    last_seen = db.Column(db.DateTime(timezone=True), nullable=True) #Add a default to it
+    suspended_till = db.Column(db.DateTime(timezone=True), nullable=True) 
+    is_activated = db.Column(db.Boolean, default=False)
+    is_admin = db.Column(db.Boolean, default=False)
 
     videos = db.relationship("Video", back_populates="user", cascade="all, delete-orphan")
     
@@ -29,7 +34,9 @@ class User(db.Model):
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),
             'last_login': self.last_login,
-            'is_active': self.is_active 
+            'last_seen': self.last_seen,
+            'is_activated': self.is_activated,
+            'is_admin': self.is_admin
         }
 
 class Video(db.Model):
@@ -79,7 +86,8 @@ class Video(db.Model):
             'updated_at': self.updated_at.isoformat(),
             'status': self.status,
             'view_count': self.view_count,
-            'username': self.user.username if self.user else None
+            'username': self.user.username if self.user else None,
+            "voice_id": self.voice_id
         }
     
     def increment_view(self):
