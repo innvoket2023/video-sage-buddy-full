@@ -8,7 +8,7 @@ from functools import wraps
 import re
 from sqlalchemy.exc import IntegrityError
 
-
+#Some Middleware before_request methods are defined in the app context, which is in main.py or wherever is the execution point
 def get_and_decode_auth_header():
     auth_header = request.headers.get('Authorization')
     if not auth_header:
