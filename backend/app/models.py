@@ -21,7 +21,14 @@ class User(db.Model):
     is_admin = db.Column(db.Boolean, default=False)
 
     videos = db.relationship("Video", back_populates="user", cascade="all, delete-orphan")
-    
+
+    chat_sessions = db.relationship(
+    "ChatSession", # Or "ChatSession" if you renamed the class
+    back_populates="user",
+    lazy="dynamic", # Often good for 'one-to-many' - returns a query object
+    cascade="all, delete-orphan"   
+    )
+
     def __repr__(self):
         return f'<User {self.username}>'
     
@@ -110,3 +117,59 @@ class Video(db.Model):
         minutes = total_seconds // 60
         seconds = total_seconds % 60
         return f"{minutes}:{seconds:02d}"
+
+class ChatSession(db.Model):
+    __tablename__ = "chat_sessions"
+
+    # --- Primary Key for this table ---
+    # This ID uniquely identifies this session metadata record.
+    # It likely corresponds to the ID used in the external chat_history table.
+    session_id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    # --- Foreign Key to User ---
+    user_id = db.Column(UUID(as_uuid=True), db.ForeignKey('users.user_id', ondelete='CASCADE'), nullable=False, index=True)
+
+    # --- Timestamps for this metadata record ---
+    created_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now())
+    updated_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now(), onupdate=db.func.now())
+
+    # --- SQLAlchemy Relationship to User (Recommended) ---
+    # Allows easy access like `chat_instance.user`
+    # Assumes you add a corresponding relationship to the User model:
+    # e.g., in User model: chat_sessions = db.relationship("Chat", back_populates="user", lazy=True, cascade="all, delete-orphan")
+    user = db.relationship("User", back_populates="chat_sessions")
+
+    # --- NO Relationship to ChatHistory possible without its model ---
+
+    def __repr__(self):
+        # More descriptive representation
+        return f'<ChatSession id={self.session_id} user_id={self.user_id}>'
+
+    # --- Helper Functions ---
+
+    def to_dict(self, include_user=False):
+        """
+        Serializes the ChatSession object into a dictionary.
+
+        Args:
+            include_user (bool): If True, includes basic user info if loaded.
+
+        Returns:
+            dict: A dictionary representation of the chat session metadata.
+        """
+        data = {
+            'session_id': str(self.session_id), # Convert UUID to string
+            'user_id': str(self.user_id),       # Convert UUID to string
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+        # Include user details if requested and the relationship is loaded
+        if include_user and self.user:
+             # Be careful not to cause infinite loops if User.to_dict includes sessions
+             data['user'] = {
+                 'user_id': str(self.user.user_id),
+                 'username': self.user.username
+             }
+             # Add other safe user fields as needed
+        return data
+
