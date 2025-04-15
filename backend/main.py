@@ -32,11 +32,13 @@ def create_app(config_name="development"):
     
     from app.routes import app_bp
     from app.auth_routes import auth_bp  # Import the auth blueprint
-    from app.admin.admin_api import admin
-    
+    from app.admin.admin_routes import admin
+    from app.chat.chat_routes import chat
+
     app.register_blueprint(app_bp)
     app.register_blueprint(auth_bp)  # Register auth blueprint
     app.register_blueprint(admin)
+    app.register_blueprint(chat)
 
     #public-endpoints
     NO_AUTH_ENDPOINTS = {

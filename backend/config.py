@@ -20,6 +20,9 @@ class DevelopmentConfig:
 class ProductionConfig:
     DEBUG = False
 
+class DummyConfig:
+    SQLALCHEMY_DATABASE_URI = os.getenv("SQLALCHEMY_DB_DUMMY_URI")
+
 config_dict = {
     "development": DevelopmentConfig,
     "production": ProductionConfig
