@@ -5,7 +5,6 @@ from app.services.auth_service import (
 )
 from app.extensions import db
 from functools import wraps
-import re
 from sqlalchemy.exc import IntegrityError
 
 #Some Middleware before_request methods are defined in the app context, which is in main.py or wherever is the execution point
