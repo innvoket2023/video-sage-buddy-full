@@ -1,11 +1,11 @@
 from flask import Blueprint, request, jsonify,current_app
+from functools import wraps
+from sqlalchemy.exc import IntegrityError
 from app.services.auth_service import (
      decode_token, 
     get_user_by_id, 
 )
 from app.extensions import db
-from functools import wraps
-from sqlalchemy.exc import IntegrityError
 
 #Some Middleware before_request methods are defined in the app context, which is in main.py or wherever is the execution point
 def get_and_decode_auth_header():
