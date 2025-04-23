@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Flask-SocketIO Test</title>
+    <!-- Include the Socket.IO client library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script> [1][2][3]
+    <script type="text/javascript">
+        // Wait for the DOM to be fully loaded before executing script
+        document.addEventListener('DOMContentLoaded', (event) => {
+            // Connect to the Socket.IO server (defaults to the same host/port)
+            var socket = io(); [1][2]
+
+            // Event handler for successful connection
+            socket.on('connect', function() {
+                console.log('Connected to the server.');
+                // Optionally send a message upon connection
+                socket.emit('client_event', {data: 'Client has connected!'}); [1][3]
+            });
+
+            // Event handler for receiving 'server_response' events
+            socket.on('server_response', function(msg) {
+                console.log('Received from server: ', msg.data);
+                // Display the message on the page (optional)
+                var messagesDiv = document.getElementById('messages');
+                messagesDiv.innerHTML += '<p>' + msg.data + '</p>';
+            });
+
+            // Event handler for disconnection
+            socket.on('disconnect', function() {
+                console.log('Disconnected from the server.');
+            });
+
+            // Function to send a message to the server
+            window.sendMessage = function() {
+                var input = document.getElementById('messageInput');
+                var message = input.value;
+                if (message) {
+                    // Emit the 'client_event' with the message data
+                    socket.emit('blah', {data: message}); [2]
+                    input.value = ''; // Clear the input field
+                }
+            }
+        });
+    </script>
+</head>
+<body>
+    <h1>Flask-SocketIO Test</h1>
+    <input type="text" id="messageInput" placeholder="Enter message">
+    <button onclick="sendMessage()">Send Message</button> [2]
+    <h2>Messages:</h2>
+    <div id="messages"></div>
+</body>
+</html>
